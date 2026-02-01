@@ -18,8 +18,12 @@ const adminScene = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
 
-  // 2-QADAM: Tasdiqlash
+  // 2-QADAM: Xabarni qabul qilish va Tasdiqlash
   async ctx => {
+    // --- TUZATISH: Xabar borligini tekshiramiz ---
+    if (!ctx.message) return;
+
+    // Bekor qilish tekshiruvi (Rasmda text bo'lmaydi, shuning uchun optional chaining ?.)
     if (ctx.message.text === "🚫 Bekor qilish") {
       await ctx.reply("Bekor qilindi.", Markup.removeKeyboard());
       return ctx.scene.leave();
@@ -38,6 +42,9 @@ const adminScene = new Scenes.WizardScene(
 
   // 3-QADAM: YUBORISH (BROADCAST)
   async ctx => {
+    // Bu yerda ham xabar borligini tekshiramiz
+    if (!ctx.message || !ctx.message.text) return;
+
     if (ctx.message.text === "✅ Ha, yuborilsin") {
       const users = await User.find(); // Bazadagi hamma odamni olamiz
       let success = 0;
