@@ -19,21 +19,7 @@ bot.use(session());
 bot.use(stage.middleware());
 
 // --- XOTIRA (RAM) ---
-
-// 1. Yakkaxon o'yinlar uchun (Lichkada)
 const activeGames = new Map();
-
-// 2. Guruh o'yinlar uchun (Lobby va Multiplayer)
-// Key: chatId
-// Value: {
-//    quizId, questions, currentQIndex, time_limit,
-//    players: Set(userId),        // Ro'yxatdan o'tganlar ID si
-//    playerNames: Map(userId -> Name), // Ismlar (Leaderboard uchun)
-//    scores: Map(userId -> score),     // Ballar
-//    answeredUsers: Set(userId),  // Hozirgi savolga javob berganlar
-//    timer: null,                 // Vaqt sanagich
-//    status: 'lobby' | 'playing'
-// }
 const groupGames = new Map();
 
 // ===================================================
@@ -58,7 +44,7 @@ bot.start(async ctx => {
 
   const payload = ctx.startPayload;
 
-  // A) GURUHDA START (startgroup param bilan) -> LOBBY OCHISH
+  // A) GURUHDA START (Deep Link orqali) -> LOBBY OCHISH
   if (
     payload &&
     (ctx.chat.type === "group" || ctx.chat.type === "supergroup")
@@ -66,26 +52,70 @@ bot.start(async ctx => {
     return initGroupLobby(ctx, payload);
   }
 
-  // B) LICHKADA START (start param bilan) -> YAKKAXON O'YIN
+  // B) LICHKADA START (Deep Link orqali) -> YAKKAXON O'YIN
   if (payload && ctx.chat.type === "private") {
     return initSoloQuizSession(ctx, payload);
   }
 
-  // C) ODDIY MENYU
-  await ctx.reply(
-    `👋 <b>Xush kelibsiz, ${ctx.from.first_name}!</b>\n\nBu bot orqali testlar tuzishingiz va guruhlarda do'stlar bilan bellashingiz mumkin.`,
-    {
-      parse_mode: "HTML",
-      ...Markup.keyboard([
-        ["Yangi test tuzish"],
-        ["Testlarimni ko'rish"],
-      ]).resize(),
-    }
-  );
+  // C) ODDIY MENYU (Login va Chat turini tekshirish)
+  if (ctx.chat.type === "private") {
+    // FAQAT LICHKADA MENYU CHIQADI
+    await ctx.reply(
+      `👋 <b>Xush kelibsiz, ${ctx.from.first_name}!</b>\n\nBu bot orqali testlar tuzishingiz va guruhlarda do'stlar bilan bellashingiz mumkin.`,
+      {
+        parse_mode: "HTML",
+        ...Markup.keyboard([
+          ["Yangi test tuzish", "Testlarimni ko'rish"],
+          ["👤 Mening profilim"],
+        ]).resize(),
+      }
+    );
+  } else {
+    // GURUHDA SHUNCHAKI SALOM (Tugmalarsiz)
+    await ctx.reply(
+      `👋 Salom! Test ishlash uchun menga lichkada yozing yoki guruhga test havolasini tashlang.`
+    );
+  }
 });
 
 // --- MENYU HANDLERS ---
 bot.hears("Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
+
+// 1. MENING PROFILIM (YANGI FUNKSIYA)
+bot.hears("👤 Mening profilim", async ctx => {
+  const userId = ctx.from.id;
+
+  // Foydalanuvchi ma'lumotlari
+  const user = await User.findOne({ telegramId: userId });
+
+  // Natijalarni hisoblash (Aggregation)
+  const agg = await Result.aggregate([
+    { $match: { userId: userId } },
+    {
+      $group: { _id: null, totalScore: { $sum: "$score" }, count: { $sum: 1 } },
+    },
+  ]);
+
+  const stats = agg[0] || { totalScore: 0, count: 0 };
+
+  // Unvon berish tizimi
+  let rank = "Boshlovchi 👶";
+  if (stats.totalScore > 50) rank = "Bilimdon 🧠";
+  if (stats.totalScore > 200) rank = "Ekspert 🎓";
+  if (stats.totalScore > 500) rank = "Professor 👨‍🏫";
+  if (stats.totalScore > 1000) rank = "Afsona 🏆";
+
+  await ctx.reply(
+    `👤 <b>SIZNING PROFILINGIZ</b>\n\n` +
+      `📝 Ism: <b>${user ? user.firstName : ctx.from.first_name}</b>\n` +
+      `🆔 ID: <code>${userId}</code>\n\n` +
+      `📊 <b>Sizning natijalaringiz:</b>\n` +
+      `✅ Yechilgan testlar: <b>${stats.count}</b> ta\n` +
+      `⭐️ Umumiy ball: <b>${stats.totalScore}</b>\n\n` +
+      `🏅 Unvon: <b>${rank}</b>`,
+    { parse_mode: "HTML" }
+  );
+});
 
 bot.hears("Testlarimni ko'rish", async ctx => {
   try {
@@ -102,9 +132,9 @@ bot.hears("Testlarimni ko'rish", async ctx => {
   }
 });
 
-// --- TESTNI KO'RISH VA ULASHISH ---
+// --- TESTNI KO'RISH VA ULASHISH (Yangilandi: O'chirish tugmasi) ---
 bot.hears(/^\/view_(.+)$/, async ctx => {
-  let quizId = ctx.match[1].split("@")[0]; // Tozalash
+  let quizId = ctx.match[1].split("@")[0];
 
   if (!mongoose.Types.ObjectId.isValid(quizId))
     return ctx.reply("❌ Noto'g'ri ID.");
@@ -132,9 +162,43 @@ bot.hears(/^\/view_(.+)$/, async ctx => {
         ),
       ],
       [Markup.button.url("👥 Guruhda boshlash", groupLink)],
-      [Markup.button.callback("📊 Statistika", `stats_${quiz._id}`)],
+      [
+        Markup.button.callback("📊 Statistika", `stats_${quiz._id}`),
+        Markup.button.callback("🗑 O'chirish", `delete_quiz_${quiz._id}`), // <--- YANGI TUGMA
+      ],
     ]),
   });
+});
+
+// 2. TESTNI O'CHIRISH (ACTION)
+bot.action(/^delete_quiz_(.+)$/, async ctx => {
+  const quizId = ctx.match[1];
+  try {
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz) return ctx.answerCbQuery("Test topilmadi!", true);
+
+    // Faqat test egasi o'chira oladi
+    if (quiz.creatorId !== ctx.from.id) {
+      return ctx.answerCbQuery(
+        "Bu testni faqat uning muallifi o'chira oladi!",
+        true
+      );
+    }
+
+    // Testni o'chiramiz
+    await Quiz.findByIdAndDelete(quizId);
+    // Natijalarni ham o'chirish (ixtiyoriy)
+    await Result.deleteMany({ quizId: quizId });
+
+    await ctx.deleteMessage(); // Eski xabarni o'chirish
+    await ctx.reply(
+      `✅ <b>"${quiz.title}"</b> testi muvaffaqiyatli o'chirildi!`,
+      { parse_mode: "HTML" }
+    );
+  } catch (e) {
+    console.error(e);
+    ctx.answerCbQuery("Xatolik bo'ldi.", true);
+  }
 });
 
 // --- STATISTIKA ---
@@ -159,12 +223,10 @@ bot.action(/^stats_(.+)$/, async ctx => {
 // 2. GURUH O'YINI (MULTIPLAYER LOBBY)
 // ===================================================
 
-// 1. LOBBY YARATISH
 async function initGroupLobby(ctx, quizId) {
   const quiz = await Quiz.findById(quizId);
   if (!quiz) return ctx.reply("Test topilmadi.");
 
-  // Guruh o'yinini xotiraga yozamiz
   groupGames.set(ctx.chat.id, {
     quizId: quiz._id,
     title: quiz.title,
@@ -193,7 +255,6 @@ async function initGroupLobby(ctx, quizId) {
   );
 }
 
-// 2. QO'SHILISH TUGMASI
 bot.action("join_game", async ctx => {
   const chatId = ctx.chat.id;
   const userId = ctx.from.id;
@@ -211,12 +272,10 @@ bot.action("join_game", async ctx => {
     });
   }
 
-  // O'yinchini qo'shamiz
   game.players.add(userId);
   game.scores.set(userId, 0);
   game.playerNames.set(userId, ctx.from.first_name);
 
-  // Ro'yxatni yangilaymiz
   const namesList = Array.from(game.playerNames.values())
     .map(name => `• ${name}`)
     .join("\n");
@@ -237,12 +296,10 @@ bot.action("join_game", async ctx => {
   ctx.answerCbQuery("Muvaffaqiyatli qo'shildingiz!");
 });
 
-// 3. BOSHLASH TUGMASI
 bot.action("start_group_game", async ctx => {
   const game = groupGames.get(ctx.chat.id);
   if (!game) return ctx.answerCbQuery("O'yin topilmadi.");
 
-  // SHART 1: Kamida 2 kishi
   if (game.players.size < 2) {
     return ctx.answerCbQuery("⚠️ Kamida 2 kishi qo'shilishi kerak!", {
       show_alert: true,
@@ -250,54 +307,44 @@ bot.action("start_group_game", async ctx => {
   }
 
   game.status = "playing";
-  await ctx.deleteMessage().catch(() => {}); // Lobby xabarini o'chiramiz
+  await ctx.deleteMessage().catch(() => {});
   await ctx.reply(`🚀 <b>O'yin boshlandi!</b>\nBarchaga omad!`, {
     parse_mode: "HTML",
   });
-
-  // Savollarni yuborishni boshlaymiz
   sendGroupQuestion(ctx.chat.id, ctx.telegram);
 });
 
-// 4. SAVOL YUBORISH (Guruh uchun)
 async function sendGroupQuestion(chatId, telegram) {
   const game = groupGames.get(chatId);
   if (!game) return;
 
-  // Tugagan bo'lsa
   if (game.currentQIndex >= game.questions.length) {
     return finishGroupGame(chatId, telegram);
   }
 
   const q = game.questions[game.currentQIndex];
-  game.answeredUsers.clear(); // Javoblarni tozalaymiz
+  game.answeredUsers.clear();
 
-  // Buzilgan savolni o'tkazib yuborish
   if (typeof q.correct_option_id !== "number") {
     game.currentQIndex++;
     return sendGroupQuestion(chatId, telegram);
   }
 
   try {
-    // Savol yuborish
     await telegram.sendQuiz(chatId, q.question, q.options, {
       is_anonymous: false,
       correct_option_id: q.correct_option_id,
       explanation: q.explanation,
-      open_period: game.time_limit, // Vizual taymer
+      open_period: game.time_limit,
     });
 
-    // SHART 2: SERVER TAYMERI
-    // Agar hamma javob bermasa ham, vaqt tugaganda majburan o'tkazish
     if (game.timer) clearTimeout(game.timer);
-
     game.timer = setTimeout(
       () => {
-        // Vaqt tugadi!
         forceNextGroupQuestion(chatId, telegram);
       },
       (game.time_limit + 2) * 1000
-    ); // +2 sekund zaxira
+    );
   } catch (e) {
     console.error(e);
     game.currentQIndex++;
@@ -308,28 +355,22 @@ async function sendGroupQuestion(chatId, telegram) {
 function forceNextGroupQuestion(chatId, telegram) {
   const game = groupGames.get(chatId);
   if (!game) return;
-
   game.currentQIndex++;
   sendGroupQuestion(chatId, telegram);
 }
 
-// 5. YAKUNLASH VA LEADERBOARD (Guruh uchun)
 async function finishGroupGame(chatId, telegram) {
   const game = groupGames.get(chatId);
   if (!game) return;
 
   if (game.timer) clearTimeout(game.timer);
 
-  // Ballarni saralash (Eng ko'p balldan kamiga)
   const sortedScores = [...game.scores.entries()].sort((a, b) => b[1] - a[1]);
-
   let msg = `🏁 <b>O'yin yakunlandi!</b>\n\n🏆 <b>G'oliblar ro'yxati:</b>\n\n`;
 
-  // SHART 3: Chiroyli natijalar
   for (let i = 0; i < sortedScores.length; i++) {
     const [userId, score] = sortedScores[i];
     const name = game.playerNames.get(userId) || "Foydalanuvchi";
-
     let medal = "👤";
     if (i === 0) medal = "🥇";
     if (i === 1) medal = "🥈";
@@ -337,7 +378,6 @@ async function finishGroupGame(chatId, telegram) {
 
     msg += `${medal} <b>${name}</b>: ${score} ball\n`;
 
-    // Natijani bazaga ham saqlab qo'yamiz (ixtiyoriy)
     try {
       await Result.create({
         userId: userId,
@@ -350,10 +390,7 @@ async function finishGroupGame(chatId, telegram) {
   }
 
   msg += `\nJami savollar: ${game.questions.length} ta`;
-
   await telegram.sendMessage(chatId, msg, { parse_mode: "HTML" });
-
-  // O'yinni o'chiramiz
   groupGames.delete(chatId);
 }
 
@@ -372,8 +409,6 @@ async function initSoloQuizSession(ctx, quizId) {
     }
 
     const userId = ctx.from.id;
-
-    // Eskisi bo'lsa o'chiramiz
     if (activeGames.has(userId)) {
       clearTimeout(activeGames.get(userId).timer);
       activeGames.delete(userId);
@@ -482,8 +517,6 @@ bot.on("poll_answer", async ctx => {
   const userId = ctx.pollAnswer.user.id;
   const answer = ctx.pollAnswer;
 
-  // A) GURUH O'YININI TEKSHIRISH
-  // Foydalanuvchi qaysi guruhda o'ynayotganini topamiz
   let groupGame = null;
   let groupChatId = null;
 
@@ -496,43 +529,31 @@ bot.on("poll_answer", async ctx => {
   }
 
   if (groupGame) {
-    // Guruh o'yini logikasi
     const currentQ = groupGame.questions[groupGame.currentQIndex];
-
-    // User bu savolga javob berganmi?
     if (groupGame.answeredUsers.has(userId)) return;
-
     groupGame.answeredUsers.add(userId);
 
-    // Ball berish
     if (currentQ && answer.option_ids[0] === currentQ.correct_option_id) {
       const oldScore = groupGame.scores.get(userId) || 0;
       groupGame.scores.set(userId, oldScore + 1);
     }
 
-    // SHART 2 (Sinxronizatsiya): Hamma javob berdimi?
     if (groupGame.answeredUsers.size === groupGame.players.size) {
-      // Hamma javob berdi! Taymerni to'xtatamiz
       if (groupGame.timer) clearTimeout(groupGame.timer);
-
-      // Tezda keyingisiga o'tamiz (biroz animatsiya uchun kutib)
       setTimeout(() => {
         forceNextGroupQuestion(groupChatId, ctx.telegram);
       }, 1000);
     }
-    return; // Guruh o'yini hal qilindi, chiqib ketamiz
+    return;
   }
 
-  // B) YAKKAXON O'YINNI TEKSHIRISH
   const soloGame = activeGames.get(userId);
   if (soloGame) {
     if (soloGame.timer) clearTimeout(soloGame.timer);
-
     const currentQ = soloGame.questions[soloGame.currentValues];
     if (currentQ && answer.option_ids[0] === currentQ.correct_option_id) {
       soloGame.score++;
     }
-
     soloGame.currentValues++;
     activeGames.set(userId, soloGame);
     setTimeout(() => {
@@ -541,12 +562,11 @@ bot.on("poll_answer", async ctx => {
   }
 });
 
-// Xatoliklarni ushlash
 bot.catch(err => console.log("Global error:", err));
 
 bot
   .launch()
-  .then(() => console.log("🚀 Quiz Bot (Full Multiplayer) ishga tushdi!"));
+  .then(() => console.log("🚀 Quiz Bot (Features Updated) ishga tushdi!"));
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));

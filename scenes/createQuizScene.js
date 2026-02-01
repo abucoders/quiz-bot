@@ -13,9 +13,15 @@ const createQuizScene = new Scenes.WizardScene(
 
   // 1. Nomini so'rash
   async ctx => {
+    // Bekor qilish tekshiruvi (faqat shu qadamda /cancel ishlatamiz yoki tugma)
+    if (ctx.message?.text === "🚫 Bekor qilish") {
+      await ctx.reply("❌ Test tuzish bekor qilindi.", Markup.removeKeyboard());
+      return ctx.scene.leave();
+    }
+
     await ctx.reply(
       "Keling, yangi test tuzamiz. Test sarlavhasini yuboring:",
-      Markup.removeKeyboard()
+      Markup.keyboard([["🚫 Bekor qilish"]]).resize() //
     );
     ctx.wizard.state.quiz = {};
     return ctx.wizard.next();
@@ -23,20 +29,32 @@ const createQuizScene = new Scenes.WizardScene(
 
   // 2. Tavsif va Test tuzishni boshlash
   async ctx => {
+    // Bekor qilish tekshiruvi
+    if (ctx.message?.text === "🚫 Bekor qilish") {
+      await ctx.reply("❌ Test tuzish bekor qilindi.", Markup.removeKeyboard());
+      return ctx.scene.leave();
+    }
+
     ctx.wizard.state.quiz.title = ctx.message.text;
     ctx.wizard.state.quiz.creatorId = ctx.from.id;
     ctx.wizard.state.quiz.questions = [];
 
     await ctx.reply(
       "Yaxshi. Endi test tavsifini yuboring (yoki o'tkazib yuborish uchun /skip bosing).",
-      Markup.keyboard([["/skip"]]).resize()
+      Markup.keyboard([["/skip"], ["🚫 Bekor qilish"]]).resize()
     );
     return ctx.wizard.next();
   },
 
   // 3. Savol qo'shish bosqichi (LOOP)
   async ctx => {
-    // Tavsifni saqlash (agar avvalgi qadamdan kelsa)
+    // Bekor qilish tekshiruvi
+    if (ctx.message?.text === "🚫 Bekor qilish") {
+      await ctx.reply("❌ Test tuzish bekor qilindi.", Markup.removeKeyboard());
+      return ctx.scene.leave();
+    }
+
+    // Tavsifni saqlash
     if (!ctx.wizard.state.quiz.description) {
       if (ctx.message.text && ctx.message.text !== "/skip") {
         ctx.wizard.state.quiz.description = ctx.message.text;
@@ -45,51 +63,54 @@ const createQuizScene = new Scenes.WizardScene(
       }
     }
 
-    // Maxsus klaviatura
+    // Klaviatura
     const keyboard = Markup.keyboard([
-      ["Savol tuzish"], // Siz so'ragan tugma
+      ["Savol tuzish"],
       ["/done", "/undo"],
+      ["🚫 Bekor qilish"], //
     ]).resize();
 
-    // Agar foydalanuvchi "Savol tuzish" tugmasini bossa
+    // Yo'riqnoma
     if (ctx.message && ctx.message.text === "Savol tuzish") {
       await ctx.reply(
         "📎 <b>Savol qo'shish uchun:</b>\n\n" +
           "1. Pastdagi <b>Skrepka (📎)</b> tugmasini bosing.\n" +
           "2. <b>Poll (So'rovnoma)</b> ni tanlang.\n" +
           "3. Savol va variantlarni yozing.\n" +
-          "4. Pastga tushib <b>'Quiz Mode'</b> (Viktorina rejimi) ni yoqing va to'g'ri javobni tanlang.\n" +
-          "5. <b>'Create'</b> (Yaratish) tugmasini bosing.",
+          "4. Pastga tushib <b>'Quiz Mode'</b> ni yoqing va to'g'ri javobni (ko'k tik ✅) belgilang.\n" +
+          "5. <b>'Create'</b> tugmasini bosing.",
         { parse_mode: "HTML" }
       );
-      return; // Qadamni o'zgartirmaymiz
+      return;
     }
 
-    // Agar foydalanuvchi Poll yuborsa
+    // POLL QABUL QILISH
     if (ctx.message && ctx.message.poll) {
       const poll = ctx.message.poll;
 
-      // --- TUZATISH 1: Debug va Return ---
-      console.log("Kelgan poll:", poll); // Terminalda ko'rish uchun
-
-      // 1. Quiz Mode tekshiruvi
       if (poll.type !== "quiz") {
         await ctx.reply(
-          "❌ Bu oddiy so'rovnoma. Iltimos, pastdan <b>'Quiz Mode'</b> ni yoqib yuboring.",
+          "❌ Bu oddiy so'rovnoma. Iltimos, <b>'Quiz Mode'</b> ni yoqing.",
           { parse_mode: "HTML" }
-        );
-        return; // <--- ENG MUHIM JOYI: SHU YERDA TO'XTASH KERAK!
-      }
-
-      // 2. To'g'ri javob borligini tekshirish
-      if (typeof poll.correct_option_id === "undefined") {
-        await ctx.reply(
-          "❌ Siz to'g'ri javobni belgilamadingiz. So'rovnoma yaratishda variantlardan birini tanlab (ko'k tik ✅), keyin 'Create' tugmasini bosing."
         );
         return;
       }
 
-      // Agar hammasi joyida bo'lsa, bazaga qo'shamiz
+      if (poll.is_anonymous) {
+        await ctx.reply(
+          "❌ <b>Xatolik:</b> Iltimos, <b>'Anonymous Voting'</b>ni O'CHIRIB yuboring.",
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+
+      if (typeof poll.correct_option_id === "undefined") {
+        await ctx.reply(
+          "❌ To'g'ri javob belgilanmagan. Iltimos, javobni belgilab qayta yuboring."
+        );
+        return;
+      }
+
       ctx.wizard.state.quiz.questions.push({
         question: poll.question,
         options: poll.options.map(o => o.text),
@@ -105,7 +126,7 @@ const createQuizScene = new Scenes.WizardScene(
       return;
     }
 
-    // Agar /done bossa -> Vaqtni sozlashga o'tamiz
+    // /done -> Keyingi qadam
     if (ctx.message && ctx.message.text === "/done") {
       if (ctx.wizard.state.quiz.questions.length === 0) {
         await ctx.reply("Hech bo'lmasa bitta savol qo'shing.");
@@ -113,13 +134,13 @@ const createQuizScene = new Scenes.WizardScene(
       }
 
       await ctx.reply(
-        "Savollar uchun vaqt belgilang. Guruhlada bot vaqt tugashi bilan keyingi savolni yuboradi.",
-        Markup.keyboard(timeOptions).resize()
+        "Savollar uchun vaqt belgilang.",
+        Markup.keyboard([...timeOptions, ["🚫 Bekor qilish"]]).resize()
       );
       return ctx.wizard.next();
     }
 
-    // /undo bosilsa
+    // /undo
     if (ctx.message && ctx.message.text === "/undo") {
       if (ctx.wizard.state.quiz.questions.length > 0) {
         ctx.wizard.state.quiz.questions.pop();
@@ -133,13 +154,19 @@ const createQuizScene = new Scenes.WizardScene(
     }
 
     await ctx.reply(
-      "Yangi savol yuboring (Poll ko'rinishida) yoki yo'riqnoma uchun 'Savol tuzish' ni bosing.",
+      "Yangi savol yuboring (Poll) yoki 'Savol tuzish' tugmasini bosing.",
       keyboard
     );
   },
 
   // 4. Vaqtni qabul qilish
   async ctx => {
+    // Bekor qilish
+    if (ctx.message?.text === "🚫 Bekor qilish") {
+      await ctx.reply("❌ Test tuzish bekor qilindi.", Markup.removeKeyboard());
+      return ctx.scene.leave();
+    }
+
     const text = ctx.message.text;
     let seconds = 30; // Default
 
@@ -160,6 +187,7 @@ const createQuizScene = new Scenes.WizardScene(
         ["Faqat javoblar"],
         ["Savollar va javoblar"],
         ["Yo'q"],
+        ["🚫 Bekor qilish"],
       ]).resize()
     );
     return ctx.wizard.next();
@@ -167,6 +195,12 @@ const createQuizScene = new Scenes.WizardScene(
 
   // 5. Aralashtirish va Saqlash
   async ctx => {
+    // Bekor qilish
+    if (ctx.message?.text === "🚫 Bekor qilish") {
+      await ctx.reply("❌ Test tuzish bekor qilindi.", Markup.removeKeyboard());
+      return ctx.scene.leave();
+    }
+
     const type = ctx.message.text;
     let shuffleQ = false;
     let shuffleO = false;
@@ -177,7 +211,6 @@ const createQuizScene = new Scenes.WizardScene(
       shuffleO = true;
     }
 
-    // Bazaga saqlash
     const quizData = {
       title: ctx.wizard.state.quiz.title,
       description: ctx.wizard.state.quiz.description,
@@ -190,12 +223,10 @@ const createQuizScene = new Scenes.WizardScene(
       },
     };
 
-    // --- TUZATISH 2: newQuiz yaratish ---
     try {
-      const newQuiz = new Quiz(quizData); // <--- BU QATOR YO'Q EDI
+      const newQuiz = new Quiz(quizData);
       await newQuiz.save();
 
-      // Yakuniy Dashboard
       const link = `https://t.me/${ctx.botInfo.username}?start=${newQuiz._id}`;
 
       let statsText = `<b>${newQuiz.title}</b>\n`;
@@ -205,6 +236,13 @@ const createQuizScene = new Scenes.WizardScene(
       statsText += `🔀 ${type}\n\n`;
       statsText += `<b>Ulashish uchun havola:</b>\n${link}`;
 
+      // Asosiy menyu tugmalari
+      const mainMenuKeyboard = Markup.keyboard([
+        ["Yangi test tuzish", "Testlarimni ko'rish"],
+        ["👤 Mening profilim"],
+      ]).resize();
+
+      // Testni boshqarish tugmalari (Inline)
       await ctx.reply(statsText, {
         parse_mode: "HTML",
         ...Markup.inlineKeyboard([
@@ -229,6 +267,9 @@ const createQuizScene = new Scenes.WizardScene(
           [Markup.button.callback("Test statistikasi", `stats_${newQuiz._id}`)],
         ]),
       });
+
+      // Menyuni qayta chiqarish uchun
+      await ctx.reply("✅ Test muvaffaqiyatli saqlandi!", mainMenuKeyboard);
     } catch (error) {
       console.error("Saqlashda xatolik:", error);
       await ctx.reply("Testni saqlashda xatolik yuz berdi.");
