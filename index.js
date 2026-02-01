@@ -5,7 +5,7 @@ const Quiz = require("./models/Quiz");
 const Result = require("./models/Result");
 const User = require("./models/User");
 const createQuizScene = require("./scenes/createQuizScene");
-const importQuizScene = require("./scenes/importQuizScene");
+const importQuizScene = require("./scenes/importQuizScene"); // Yangi sahnani ulash
 
 // MongoDB ulanishi
 mongoose
@@ -14,7 +14,9 @@ mongoose
   .catch(err => console.error(err));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const stage = new Scenes.Stage([createQuizScene, importQuizScene]);
+
+// Sahnalarni ro'yxatga olish
+const stage = new Scenes.Stage([createQuizScene, importQuizScene]); //
 
 bot.use(session());
 bot.use(stage.middleware());
@@ -22,6 +24,82 @@ bot.use(stage.middleware());
 // --- XOTIRA (RAM) ---
 const activeGames = new Map();
 const groupGames = new Map();
+
+// ===================================================
+// 🔥 MAJBURIY OBUNA (MIDDLEWARE)
+// ===================================================
+
+const checkSubscription = async (ctx, next) => {
+  // 1. Agar kanal sozlanmagan bo'lsa, tekshirmaymiz
+  const channel = process.env.REQUIRED_CHANNEL;
+  if (!channel) return next();
+
+  // 2. Agar bu "Tekshirish" tugmasi bo'lsa, o'tkazib yuboramiz (pastda alohida handler bor)
+  if (ctx.callbackQuery && ctx.callbackQuery.data === "check_sub")
+    return next();
+
+  // 3. User ID ni aniqlaymiz
+  const userId = ctx.from?.id;
+  if (!userId) return next();
+
+  try {
+    // Telegramdan user statusini so'raymiz
+    const member = await ctx.telegram.getChatMember(channel, userId);
+
+    // Ruxsat berilgan statuslar: creator (yaratuvchi), administrator, member (a'zo)
+    if (["creator", "administrator", "member"].includes(member.status)) {
+      return next(); // A'zo ekan, ruxsat beramiz!
+    } else {
+      // ⛔️ A'zo emas!
+      // Agar guruhda bo'lsa, shunchaki javob bermay qo'ya qolamiz (spam bo'lmasligi uchun)
+      // Lekin lichkada bo'lsa, majburiy obuna xabarini chiqaramiz.
+      if (ctx.chat.type !== "private") return;
+
+      const channelLink = `https://t.me/${channel.replace("@", "")}`;
+
+      await ctx.reply(
+        `⚠️ <b>Botdan foydalanish uchun kanalimizga a'zo bo'ling!</b>\n\n` +
+          `A'zo bo'lganingizdan so'ng <b>"✅ Tasdiqlash"</b> tugmasini bosing.`,
+        {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            [Markup.button.url("📢 Kanalga a'zo bo'lish", channelLink)],
+            [Markup.button.callback("✅ Tasdiqlash", "check_sub")],
+          ]),
+        }
+      );
+      // Kod shu yerda to'xtaydi, next() chaqirilmaydi.
+    }
+  } catch (err) {
+    console.error("Obuna tekshirishda xatolik:", err);
+    // Agar bot kanalda admin bo'lmasa yoki xato chiqsa, userga xalaqit bermaymiz
+    return next();
+  }
+};
+
+// Middlewareni ulash (Barcha komandalardan oldin ishlaydi)
+bot.use(checkSubscription);
+
+// "✅ Tasdiqlash" tugmasi bosilganda
+bot.action("check_sub", async ctx => {
+  const channel = process.env.REQUIRED_CHANNEL;
+  try {
+    const member = await ctx.telegram.getChatMember(channel, ctx.from.id);
+    if (["creator", "administrator", "member"].includes(member.status)) {
+      await ctx.deleteMessage(); // Eski xabarni o'chiramiz
+      await ctx.reply(
+        "✅ <b>Rahmat! Obuna tasdiqlandi.</b>\nEndi bemalol foydalanishingiz mumkin. /start ni bosing.",
+        { parse_mode: "HTML" }
+      );
+    } else {
+      await ctx.answerCbQuery("❌ Siz hali kanalga a'zo bo'lmadingiz!", {
+        show_alert: true,
+      });
+    }
+  } catch (e) {
+    await ctx.answerCbQuery("Xatolik yuz berdi. Keyinroq urinib ko'ring.");
+  }
+});
 
 // ===================================================
 // 1. START VA MENYU
@@ -45,7 +123,7 @@ bot.start(async ctx => {
 
   const payload = ctx.startPayload;
 
-  // A) GURUHDA START (Deep Link orqali) -> LOBBY OCHISH
+  // A) GURUHDA START
   if (
     payload &&
     (ctx.chat.type === "group" || ctx.chat.type === "supergroup")
@@ -53,14 +131,13 @@ bot.start(async ctx => {
     return initGroupLobby(ctx, payload);
   }
 
-  // B) LICHKADA START (Deep Link orqali) -> YAKKAXON O'YIN
+  // B) LICHKADA START
   if (payload && ctx.chat.type === "private") {
     return initSoloQuizSession(ctx, payload);
   }
 
-  // C) ODDIY MENYU (Login va Chat turini tekshirish)
+  // C) ODDIY MENYU
   if (ctx.chat.type === "private") {
-    // FAQAT LICHKADA MENYU CHIQADI
     await ctx.reply(
       `👋 <b>Xush kelibsiz, ${ctx.from.first_name}!</b>\n\nBu bot orqali testlar tuzishingiz va guruhlarda do'stlar bilan bellashingiz mumkin.`,
       {
@@ -72,27 +149,19 @@ bot.start(async ctx => {
       }
     );
   } else {
-    // GURUHDA SHUNCHAKI SALOM (Tugmalarsiz)
-    await ctx.reply(
-      `👋 Salom! Test ishlash uchun menga lichkada yozing yoki guruhga test havolasini tashlang.`
-    );
+    await ctx.reply(`👋 Salom! Test ishlash uchun menga lichkada yozing.`);
   }
 });
 
 // --- MENYU HANDLERS ---
 bot.hears("Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
+bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz")); //
 
-// Yangi funksiya uchun handler
-bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz"));
-
-// 1. MENING PROFILIM (YANGI FUNKSIYA)
+// MENING PROFILIM
 bot.hears("👤 Mening profilim", async ctx => {
   const userId = ctx.from.id;
-
-  // Foydalanuvchi ma'lumotlari
   const user = await User.findOne({ telegramId: userId });
 
-  // Natijalarni hisoblash (Aggregation)
   const agg = await Result.aggregate([
     { $match: { userId: userId } },
     {
@@ -102,7 +171,6 @@ bot.hears("👤 Mening profilim", async ctx => {
 
   const stats = agg[0] || { totalScore: 0, count: 0 };
 
-  // Unvon berish tizimi
   let rank = "Boshlovchi 👶";
   if (stats.totalScore > 50) rank = "Bilimdon 🧠";
   if (stats.totalScore > 200) rank = "Ekspert 🎓";
@@ -112,8 +180,7 @@ bot.hears("👤 Mening profilim", async ctx => {
   await ctx.reply(
     `👤 <b>SIZNING PROFILINGIZ</b>\n\n` +
       `📝 Ism: <b>${user ? user.firstName : ctx.from.first_name}</b>\n` +
-      `🆔 ID: <code>${userId}</code>\n\n` +
-      `📊 <b>Sizning natijalaringiz:</b>\n` +
+      `📊 <b>Natijalar:</b>\n` +
       `✅ Yechilgan testlar: <b>${stats.count}</b> ta\n` +
       `⭐️ Umumiy ball: <b>${stats.totalScore}</b>\n\n` +
       `🏅 Unvon: <b>${rank}</b>`,
@@ -136,7 +203,7 @@ bot.hears("Testlarimni ko'rish", async ctx => {
   }
 });
 
-// --- TESTNI KO'RISH VA ULASHISH (Yangilandi: O'chirish tugmasi) ---
+// --- TESTNI KO'RISH VA ULASHISH ---
 bot.hears(/^\/view_(.+)$/, async ctx => {
   let quizId = ctx.match[1].split("@")[0];
 
@@ -168,20 +235,19 @@ bot.hears(/^\/view_(.+)$/, async ctx => {
       [Markup.button.url("👥 Guruhda boshlash", groupLink)],
       [
         Markup.button.callback("📊 Statistika", `stats_${quiz._id}`),
-        Markup.button.callback("🗑 O'chirish", `delete_quiz_${quiz._id}`), // <--- YANGI TUGMA
+        Markup.button.callback("🗑 O'chirish", `delete_quiz_${quiz._id}`),
       ],
     ]),
   });
 });
 
-// 2. TESTNI O'CHIRISH (ACTION)
+// TESTNI O'CHIRISH
 bot.action(/^delete_quiz_(.+)$/, async ctx => {
   const quizId = ctx.match[1];
   try {
     const quiz = await Quiz.findById(quizId);
     if (!quiz) return ctx.answerCbQuery("Test topilmadi!", true);
 
-    // Faqat test egasi o'chira oladi
     if (quiz.creatorId !== ctx.from.id) {
       return ctx.answerCbQuery(
         "Bu testni faqat uning muallifi o'chira oladi!",
@@ -189,23 +255,20 @@ bot.action(/^delete_quiz_(.+)$/, async ctx => {
       );
     }
 
-    // Testni o'chiramiz
     await Quiz.findByIdAndDelete(quizId);
-    // Natijalarni ham o'chirish (ixtiyoriy)
     await Result.deleteMany({ quizId: quizId });
 
-    await ctx.deleteMessage(); // Eski xabarni o'chirish
-    await ctx.reply(
-      `✅ <b>"${quiz.title}"</b> testi muvaffaqiyatli o'chirildi!`,
-      { parse_mode: "HTML" }
-    );
+    await ctx.deleteMessage();
+    await ctx.reply(`✅ <b>"${quiz.title}"</b> testi o'chirildi!`, {
+      parse_mode: "HTML",
+    });
   } catch (e) {
     console.error(e);
     ctx.answerCbQuery("Xatolik bo'ldi.", true);
   }
 });
 
-// --- STATISTIKA ---
+// STATISTIKA
 bot.action(/^stats_(.+)$/, async ctx => {
   const quizId = ctx.match[1];
   const results = await Result.find({ quizId: quizId })
@@ -570,7 +633,7 @@ bot.catch(err => console.log("Global error:", err));
 
 bot
   .launch()
-  .then(() => console.log("🚀 Quiz Bot (Features Updated) ishga tushdi!"));
+  .then(() => console.log("🚀 Quiz Bot (Full Multiplayer) ishga tushdi!"));
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
