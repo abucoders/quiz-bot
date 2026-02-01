@@ -5,6 +5,7 @@ const Quiz = require("./models/Quiz");
 const Result = require("./models/Result");
 const User = require("./models/User");
 const createQuizScene = require("./scenes/createQuizScene");
+const importQuizScene = require("./scenes/importQuizScene");
 
 // MongoDB ulanishi
 mongoose
@@ -13,7 +14,7 @@ mongoose
   .catch(err => console.error(err));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const stage = new Scenes.Stage([createQuizScene]);
+const stage = new Scenes.Stage([createQuizScene, importQuizScene]);
 
 bot.use(session());
 bot.use(stage.middleware());
@@ -65,8 +66,8 @@ bot.start(async ctx => {
       {
         parse_mode: "HTML",
         ...Markup.keyboard([
-          ["Yangi test tuzish", "Testlarimni ko'rish"],
-          ["👤 Mening profilim"],
+          ["Yangi test tuzish", "📥 Matn orqali yuklash"],
+          ["Testlarimni ko'rish", "👤 Mening profilim"],
         ]).resize(),
       }
     );
@@ -80,6 +81,9 @@ bot.start(async ctx => {
 
 // --- MENYU HANDLERS ---
 bot.hears("Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
+
+// Yangi funksiya uchun handler
+bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz"));
 
 // 1. MENING PROFILIM (YANGI FUNKSIYA)
 bot.hears("👤 Mening profilim", async ctx => {
