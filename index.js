@@ -6,6 +6,7 @@ const Result = require("./models/Result");
 const User = require("./models/User");
 const createQuizScene = require("./scenes/createQuizScene");
 const importQuizScene = require("./scenes/importQuizScene"); // Yangi sahnani ulash
+const adminScene = require("./scenes/adminScene");
 
 // MongoDB ulanishi
 mongoose
@@ -16,7 +17,7 @@ mongoose
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Sahnalarni ro'yxatga olish
-const stage = new Scenes.Stage([createQuizScene, importQuizScene]); //
+const stage = new Scenes.Stage([createQuizScene, importQuizScene, adminScene]); // <--- QO'SHILDI
 
 bot.use(session());
 bot.use(stage.middleware());
@@ -99,6 +100,36 @@ bot.action("check_sub", async ctx => {
   } catch (e) {
     await ctx.answerCbQuery("Xatolik yuz berdi. Keyinroq urinib ko'ring.");
   }
+});
+
+// ===================================================
+// 👑 ADMIN PANEL
+// ===================================================
+
+// 1. STATISTIKA (/admin_stats)
+bot.command("admin_stats", async ctx => {
+  // Faqat admin ishlata olsin
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) return;
+
+  const userCount = await User.countDocuments();
+  const quizCount = await Quiz.countDocuments();
+  const resultCount = await Result.countDocuments(); // Agar Result model bo'lsa
+
+  await ctx.reply(
+    `📊 <b>BOT STATISTIKASI:</b>\n\n` +
+      `👤 Foydalanuvchilar: <b>${userCount}</b> ta\n` +
+      `📝 Tuzilgan testlar: <b>${quizCount}</b> ta\n` +
+      `✅ Yechilgan testlar: <b>${resultCount}</b> ta`,
+    { parse_mode: "HTML" }
+  );
+});
+
+// 2. XABAR TARQATISH (/broadcast)
+bot.command("broadcast", ctx => {
+  // Faqat admin ishlata olsin
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) return;
+
+  ctx.scene.enter("admin_broadcast");
 });
 
 // ===================================================
