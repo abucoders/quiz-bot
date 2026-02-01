@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "index.js": "^0.0.3",
+    "mongoose": "^9.1.5",
+    "node": "^25.5.0",
+    "telegraf": "^4.16.3"
+  }
+}
