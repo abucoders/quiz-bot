@@ -133,6 +133,64 @@ bot.command("broadcast", ctx => {
 });
 
 // ===================================================
+// 🔍 INLINE MODE (QIDIRUV TIZIMI)
+// ===================================================
+
+bot.on("inline_query", async ctx => {
+  const query = ctx.inlineQuery.query; // Foydalanuvchi yozgan matn
+  let quizzes = [];
+
+  try {
+    if (query) {
+      // 1. Agar biror narsa yozsa, nomi bo'yicha qidiramiz (Regex - harf katta kichikligiga qaramaydi)
+      quizzes = await Quiz.find({
+        title: { $regex: query, $options: "i" },
+      }).limit(20);
+    } else {
+      // 2. Agar hech narsa yozmasa, eng yangi 20 ta testni chiqaramiz
+      quizzes = await Quiz.find().sort({ createdAt: -1 }).limit(20);
+    }
+
+    // Natijalarni Telegram tushunadigan formatga o'tkazamiz
+    const results = quizzes.map(q => ({
+      type: "article",
+      id: q._id.toString(),
+      title: q.title,
+      description: `${q.questions.length} ta savol | ⏱ ${q.settings.time_limit} soniya`,
+      thumb_url: "https://cdn-icons-png.flaticon.com/512/3407/3407024.png", // Test ikonkasining rasmi
+      input_message_content: {
+        message_text:
+          `📢 <b>${q.title}</b>\n\n` +
+          `🖊 Savollar soni: ${q.questions.length} ta\n` +
+          `⏱ Vaqt: ${q.settings.time_limit} soniya\n\n` +
+          `👇 Testni ishlash uchun tugmani bosing:`,
+        parse_mode: "HTML",
+      },
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "🚀 Testni boshlash",
+              url: `https://t.me/${ctx.botInfo.username}?start=${q._id}`,
+            },
+            {
+              text: "👥 Guruhda boshlash",
+              url: `https://t.me/${ctx.botInfo.username}?startgroup=${q._id}`,
+            },
+          ],
+        ],
+      },
+    }));
+
+    // Natijani foydalanuvchiga ko'rsatamiz
+    // cache_time: 0 qildik, shunda yangi test qo'shilsa darhol ko'rinadi
+    await ctx.answerInlineQuery(results, { cache_time: 0 });
+  } catch (err) {
+    console.error("Inline Query Xato:", err);
+  }
+});
+
+// ===================================================
 // 1. START VA MENYU
 // ===================================================
 
