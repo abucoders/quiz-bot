@@ -7,6 +7,17 @@ const User = require("./models/User");
 const createQuizScene = require("./scenes/createQuizScene");
 const importQuizScene = require("./scenes/importQuizScene"); // Yangi sahnani ulash
 const adminScene = require("./scenes/adminScene");
+const http = require("http");
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Bot ishlayapti!");
+});
+
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
 
 // MongoDB ulanishi
 mongoose
