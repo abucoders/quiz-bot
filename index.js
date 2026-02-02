@@ -260,29 +260,26 @@ bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz")); //
 // MENING PROFILIM
 bot.hears("👤 Mening profilim", async ctx => {
   const userId = ctx.from.id;
+  // Userni bazadan olamiz (ballari ichida bo'ladi)
   const user = await User.findOne({ telegramId: userId });
 
-  const agg = await Result.aggregate([
-    { $match: { userId: userId } },
-    {
-      $group: { _id: null, totalScore: { $sum: "$score" }, count: { $sum: 1 } },
-    },
-  ]);
-
-  const stats = agg[0] || { totalScore: 0, count: 0 };
+  // Agar user topilmasa yoki yangi bo'lsa
+  const totalScore = user ? user.totalScore : 0;
+  const count = user ? user.quizzesSolved : 0;
+  const firstName = user ? user.firstName : ctx.from.first_name;
 
   let rank = "Boshlovchi 👶";
-  if (stats.totalScore > 50) rank = "Bilimdon 🧠";
-  if (stats.totalScore > 200) rank = "Ekspert 🎓";
-  if (stats.totalScore > 500) rank = "Professor 👨‍🏫";
-  if (stats.totalScore > 1000) rank = "Afsona 🏆";
+  if (totalScore > 50) rank = "Bilimdon 🧠";
+  if (totalScore > 200) rank = "Ekspert 🎓";
+  if (totalScore > 500) rank = "Professor 👨‍🏫";
+  if (totalScore > 1000) rank = "Afsona 🏆";
 
   await ctx.reply(
     `👤 <b>SIZNING PROFILINGIZ</b>\n\n` +
-      `📝 Ism: <b>${user ? user.firstName : ctx.from.first_name}</b>\n` +
+      `📝 Ism: <b>${firstName}</b>\n\n` +
       `📊 <b>Natijalar:</b>\n` +
-      `✅ Yechilgan testlar: <b>${stats.count}</b> ta\n` +
-      `⭐️ Umumiy ball: <b>${stats.totalScore}</b>\n\n` +
+      `✅ Yechilgan testlar: <b>${count}</b> ta\n` +
+      `⭐️ Umumiy ball: <b>${totalScore}</b>\n\n` +
       `🏅 Unvon: <b>${rank}</b>`,
     { parse_mode: "HTML" }
   );
@@ -573,6 +570,7 @@ async function finishGroupGame(chatId, telegram) {
     msg += `${medal} <b>${name}</b>: ${score} ball\n`;
 
     try {
+      // 1. Tarixga yozish
       await Result.create({
         userId: userId,
         userName: name,
@@ -580,6 +578,18 @@ async function finishGroupGame(chatId, telegram) {
         score: score,
         totalQuestions: game.questions.length,
       });
+
+      // --- YANGI: USER BALLINI OSHIRISH ---
+      await User.findOneAndUpdate(
+        { telegramId: userId },
+        {
+          $inc: {
+            totalScore: score,
+            quizzesSolved: 1,
+          },
+        }
+      );
+      // ------------------------------------
     } catch (e) {}
   }
 
@@ -697,6 +707,7 @@ async function finishSoloQuiz(userId) {
   if (game.timer) clearTimeout(game.timer);
 
   try {
+    // 1. Natijani tarixga yozamiz (Result)
     await Result.create({
       userId: userId,
       userName: game.userName,
@@ -704,14 +715,31 @@ async function finishSoloQuiz(userId) {
       score: game.score,
       totalQuestions: game.questions.length,
     });
+
+    // 2. Test o'ynalganlar sonini oshiramiz
     await Quiz.findByIdAndUpdate(game.quizId, { $inc: { plays: 1 } });
+
+    // --- YANGI: USERNI BALLINI OSHIRAMIZ ($inc - increment) ---
+    // totalScore ga ballni qo'shamiz, quizzesSolved ga 1 ni qo'shamiz
+    await User.findOneAndUpdate(
+      { telegramId: userId },
+      {
+        $inc: {
+          totalScore: game.score,
+          quizzesSolved: 1,
+        },
+      }
+    );
+    // ---------------------------------------------------------
 
     await bot.telegram.sendMessage(
       game.chatId,
       `🏁 <b>Test yakunlandi!</b>\n👤 ${game.userName}\n✅ Natija: ${game.score} / ${game.questions.length}`,
       { parse_mode: "HTML" }
     );
-  } catch (err) {}
+  } catch (err) {
+    console.error(err);
+  }
   activeGames.delete(userId);
 }
 
