@@ -207,35 +207,46 @@ bot.command("addcoin", async ctx => {
 });
 
 // ===================================================
-// 🛑 O'YINNI MAJBURIY TO'XTATISH (/stop)
+// 🛑 UNIVERSAL STOP KOMANDASI
 // ===================================================
 bot.command("stop", async ctx => {
-  // Faqat guruhlarda ishlashin
-  if (ctx.chat.type === "private")
-    return ctx.reply("Bu buyruq faqat guruhlar uchun.");
+  const userId = ctx.from.id;
 
-  // Faqat adminlar ishlata olsin
-  const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
-  if (!["creator", "administrator"].includes(member.status)) {
-    return ctx.reply("❌ O'yinni faqat guruh adminlari to'xtata oladi.");
+  // A) LICHKA (YAKKAXON O'YIN) UCHUN
+  if (ctx.chat.type === "private") {
+    if (activeGames.has(userId)) {
+      const game = activeGames.get(userId);
+      if (game.timer) clearTimeout(game.timer); // Taymerni o'chiramiz
+      activeGames.delete(userId); // O'yinni o'chiramiz
+
+      return ctx.reply(
+        "✅ <b>Test to'xtatildi.</b>\nQayta boshlash uchun menyudan tanlang.",
+        { parse_mode: "HTML" }
+      );
+    } else {
+      return ctx.reply("Sizda hozir aktiv test yo'q.");
+    }
   }
 
-  // O'yin borligini tekshirish
-  if (groupGames.has(ctx.chat.id)) {
-    const game = groupGames.get(ctx.chat.id);
+  // B) GURUH UCHUN
+  if (ctx.chat.type === "group" || ctx.chat.type === "supergroup") {
+    // Admin ekanligini tekshiramiz
+    const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
+    if (!["creator", "administrator"].includes(member.status)) {
+      return ctx.reply("❌ O'yinni faqat guruh adminlari to'xtata oladi.");
+    }
 
-    // Taymerlarni o'chiramiz (xotirani tozalash)
-    if (game.timer) clearTimeout(game.timer);
+    if (groupGames.has(ctx.chat.id)) {
+      const game = groupGames.get(ctx.chat.id);
+      if (game.timer) clearTimeout(game.timer);
+      groupGames.delete(ctx.chat.id);
 
-    // O'yinni xotiradan o'chiramiz
-    groupGames.delete(ctx.chat.id);
-
-    await ctx.reply(
-      "✅ <b>O'yin majburiy to'xtatildi.</b>\nEndi yangi test boshlashingiz mumkin.",
-      { parse_mode: "HTML" }
-    );
-  } else {
-    await ctx.reply("Hozir guruhda faol o'yin yo'q.");
+      return ctx.reply("✅ <b>O'yin majburiy to'xtatildi.</b>", {
+        parse_mode: "HTML",
+      });
+    } else {
+      return ctx.reply("Guruhda faol o'yin yo'q.");
+    }
   }
 });
 
@@ -623,6 +634,9 @@ async function initGroupLobby(ctx, quizId) {
     playerNames: new Map(),
     scores: new Map(),
     answeredUsers: new Set(),
+    // --- MANA BU YANGI QO'SHILDI ---
+    emptyCount: 0, // Nechta savolga javob berilmadi?
+    // -------------------------------
     status: "lobby",
     timer: null,
   });
@@ -738,9 +752,37 @@ async function sendGroupQuestion(chatId, telegram) {
   }
 }
 
+// ===================================================
+// KEYINGI SAVOLGA O'TISH (AUTO-STOP HIMOYA BILAN)
+// ===================================================
 function forceNextGroupQuestion(chatId, telegram) {
   const game = groupGames.get(chatId);
   if (!game) return;
+
+  // 1. TEKSHIRAMIZ: Hozirgina tugagan savolga kimdir javob berdimi?
+  if (game.answeredUsers.size === 0) {
+    // Hech kim javob bermadi -> Hisoblagichni oshiramiz
+    game.emptyCount += 1;
+  } else {
+    // Kimdir javob berdi -> Hisoblagichni nollaymiz
+    game.emptyCount = 0;
+  }
+
+  // 2. AGAR 2 TA SAVOL KETMA-KET JAVOBSIZ QOLSA
+  if (game.emptyCount >= 2) {
+    if (game.timer) clearTimeout(game.timer);
+
+    // O'yinni o'chiramiz
+    groupGames.delete(chatId);
+
+    return telegram.sendMessage(
+      chatId,
+      "🛑 <b>Faollik yo'qligi sababli o'yin avtomatik to'xtatildi.</b>\n\nDavom etish uchun qaytadan boshlang.",
+      { parse_mode: "HTML" }
+    );
+  }
+
+  // 3. Agar hammasi joyida bo'lsa, keyingi savolga o'tamiz
   game.currentQIndex++;
   sendGroupQuestion(chatId, telegram);
 }
@@ -855,6 +897,7 @@ async function initSoloQuizSession(ctx, quizId) {
       time_limit: quiz.settings.time_limit,
       chatId: ctx.chat.id,
       userName: ctx.from.first_name,
+      emptyCount: 0, // Javobsiz qolgan savollar soni
       timer: null,
     });
 
@@ -910,9 +953,28 @@ async function sendSoloQuestion(userId) {
   }
 }
 
+// ===================================================
+// YAKKAXON KEYINGI SAVOL (AUTO-STOP BILAN)
+// ===================================================
 function forceNextSoloQuestion(userId) {
   const game = activeGames.get(userId);
   if (!game) return;
+
+  // 1. Javob bermagani uchun hisoblagichni oshiramiz
+  game.emptyCount = (game.emptyCount || 0) + 1;
+
+  // 2. Agar 2 marta ketma-ket javob bermagan bo'lsa
+  if (game.emptyCount >= 2) {
+    activeGames.delete(userId); // O'yinni o'chiramiz
+
+    return bot.telegram.sendMessage(
+      game.chatId,
+      "🛑 <b>Faollik yo'qligi sababli test to'xtatildi.</b>\n\nDavom ettirish uchun qaytadan boshlang.",
+      { parse_mode: "HTML" }
+    );
+  }
+
+  // 3. Davom etamiz
   game.currentValues++;
   activeGames.set(userId, game);
   sendSoloQuestion(userId);
@@ -1012,6 +1074,10 @@ bot.on("poll_answer", async ctx => {
   const soloGame = activeGames.get(userId);
   if (soloGame) {
     if (soloGame.timer) clearTimeout(soloGame.timer);
+
+    // --- Javob berdimi, demak u faol ---
+    soloGame.emptyCount = 0;
+
     const currentQ = soloGame.questions[soloGame.currentValues];
     if (currentQ && answer.option_ids[0] === currentQ.correct_option_id) {
       soloGame.score++;
