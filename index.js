@@ -453,6 +453,51 @@ bot.hears(/^\/view_(.+)$/, async ctx => {
   });
 });
 
+// ===================================================
+// 🔄 CHATDA QAYTA O'YNASH LOGIKASI
+// ===================================================
+
+bot.action(/^restart_solo_(.+)$/, async ctx => {
+  const quizId = ctx.match[1]; // ID ni olamiz
+
+  await ctx.answerCbQuery("Test qayta yuklanmoqda... 🔄");
+
+  // Eski natija xabarini o'chirib tashlaymiz (ekran toza turishi uchun)
+  await ctx.deleteMessage().catch(() => {});
+
+  // Testni boshidan boshlaymiz
+  return initSoloQuizSession(ctx, quizId);
+});
+
+// 2. "Yopish" tugmasi (shunchaki xabarni o'chiradi)
+bot.action("delete_msg", async ctx => {
+  await ctx.deleteMessage();
+});
+
+// ===================================================
+// 🔄 GURUHDA QAYTA O'YNASH LOGIKASI
+// ===================================================
+
+bot.action(/^restart_group_(.+)$/, async ctx => {
+  const quizId = ctx.match[1];
+  const chatId = ctx.chat.id;
+
+  // 1. Agar o'yin allaqachon boshlangan bo'lsa (boshqa birov bosib ulgursa)
+  if (groupGames.has(chatId)) {
+    return ctx.answerCbQuery("O'yin allaqachon ochilgan! Qo'shiling.", {
+      show_alert: true,
+    });
+  }
+
+  await ctx.answerCbQuery("Lobbi qayta ochilmoqda...");
+
+  // 2. Eski natija xabarini o'chirib tashlaymiz (chat toza turishi uchun)
+  await ctx.deleteMessage().catch(() => {});
+
+  // 3. Yangi lobbi ochamiz
+  return initGroupLobby(ctx, quizId);
+});
+
 // TESTNI O'CHIRISH
 bot.action(/^delete_quiz_(.+)$/, async ctx => {
   const quizId = ctx.match[1];
@@ -665,6 +710,9 @@ function forceNextGroupQuestion(chatId, telegram) {
   sendGroupQuestion(chatId, telegram);
 }
 
+// ===================================================
+// GURUH O'YININI YAKUNLASH (YANGILANGAN)
+// ===================================================
 async function finishGroupGame(chatId, telegram) {
   const game = groupGames.get(chatId);
   if (!game) return;
@@ -694,7 +742,7 @@ async function finishGroupGame(chatId, telegram) {
         totalQuestions: game.questions.length,
       });
 
-      // --- YANGI: USER BALLINI OSHIRISH ---
+      // 2. User ballini oshirish
       await User.findOneAndUpdate(
         { telegramId: userId },
         {
@@ -704,12 +752,31 @@ async function finishGroupGame(chatId, telegram) {
           },
         }
       );
-      // ------------------------------------
     } catch (e) {}
   }
 
   msg += `\nJami savollar: ${game.questions.length} ta`;
-  await telegram.sendMessage(chatId, msg, { parse_mode: "HTML" });
+
+  // --- O'ZGARISH: TUGMA QO'SHILDI ---
+  try {
+    await telegram.sendMessage(chatId, msg, {
+      parse_mode: "HTML",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "🔄 Qayta o'ynash",
+              callback_data: `restart_group_${game.quizId}`,
+            },
+          ],
+        ],
+      },
+    });
+  } catch (e) {
+    console.log("Xabar yuborishda xato:", e);
+  }
+  // ----------------------------------
+
   groupGames.delete(chatId);
 }
 
@@ -822,7 +889,7 @@ async function finishSoloQuiz(userId) {
   if (game.timer) clearTimeout(game.timer);
 
   try {
-    // 1. Natijani tarixga yozamiz (Result)
+    // 1. Natijani tarixga yozamiz
     await Result.create({
       userId: userId,
       userName: game.userName,
@@ -834,8 +901,7 @@ async function finishSoloQuiz(userId) {
     // 2. Test o'ynalganlar sonini oshiramiz
     await Quiz.findByIdAndUpdate(game.quizId, { $inc: { plays: 1 } });
 
-    // --- YANGI: USERNI BALLINI OSHIRAMIZ ($inc - increment) ---
-    // totalScore ga ballni qo'shamiz, quizzesSolved ga 1 ni qo'shamiz
+    // 3. Userni ballini oshiramiz
     await User.findOneAndUpdate(
       { telegramId: userId },
       {
@@ -845,13 +911,25 @@ async function finishSoloQuiz(userId) {
         },
       }
     );
-    // ---------------------------------------------------------
 
+    // --- O'ZGARISH SHU YERDA (TUGMA QO'SHILDI) ---
     await bot.telegram.sendMessage(
       game.chatId,
       `🏁 <b>Test yakunlandi!</b>\n👤 ${game.userName}\n✅ Natija: ${game.score} / ${game.questions.length}`,
-      { parse_mode: "HTML" }
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "🔄 Takror ishlash",
+              `restart_solo_${game.quizId}`
+            ),
+          ], // <--- TUGMA
+          [Markup.button.callback("❌ Yopish", "delete_msg")],
+        ]),
+      }
     );
+    // ---------------------------------------------
   } catch (err) {
     console.error(err);
   }
