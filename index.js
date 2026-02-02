@@ -144,6 +144,69 @@ bot.command("broadcast", ctx => {
 });
 
 // ===================================================
+// 💰 ADMIN: COIN BERISH VA OLISH (YANGILANGAN)
+// ===================================================
+bot.command("addcoin", async ctx => {
+  // 1. Faqat ADMIN ishlata olsin
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) return;
+
+  // 2. Buyruqni bo'laklarga ajratamiz
+  const args = ctx.message.text.split(" ");
+  const targetId = Number(args[1]); // ID
+  const amount = Number(args[2]); // Miqdor
+
+  // 3. Tekshiruv
+  if (!targetId || !amount) {
+    return ctx.reply(
+      "❌ <b>Xato format!</b>\n\nIshlatish: <code>/addcoin ID MIQDOR</code>\nMasalan: <code>/addcoin 123456789 100</code> (Berish)\nYoki: <code>/addcoin 123456789 -50</code> (Olish)",
+      { parse_mode: "HTML" }
+    );
+  }
+
+  try {
+    // 4. Userni topib, coin qo'shamiz
+    const user = await User.findOneAndUpdate(
+      { telegramId: targetId },
+      { $inc: { coins: amount } },
+      { new: true }
+    );
+
+    if (!user) {
+      return ctx.reply("❌ Bunday ID ga ega foydalanuvchi topilmadi.");
+    }
+
+    // 5. Adminga hisobot (har doim bir xil)
+    await ctx.reply(
+      `✅ <b>Muvaffaqiyatli bajarildi!</b>\n\n👤 User: ${user.firstName}\n🔄 O'zgarish: <b>${amount}</b> Coin\n💰 Jami: <b>${user.coins}</b> Coin`,
+      { parse_mode: "HTML" }
+    );
+
+    // 6. FOYDALANUVCHIGA XABAR (MANTIQNI AJRATAMIZ)
+    if (amount > 0) {
+      // --- A) AGAR QO'SHILGAN BO'LSA (SOVG'A) ---
+      await bot.telegram.sendMessage(
+        targetId,
+        `🎁 <b>TABRIKLAYMIZ!</b>\n\nAdmin tomonidan sizga <b>${amount} Coin</b> sovg'a qilindi! 🥳\n\n💰 Hozirgi balansingiz: <b>${user.coins} Coin</b>`,
+        { parse_mode: "HTML" }
+      );
+    } else {
+      // --- B) AGAR AYIRILGAN BO'LSA (JARIMA) ---
+      // Math.abs(-40) -> 40 ga aylantiradi (minusni olib tashlaydi)
+      const positiveAmount = Math.abs(amount);
+
+      await bot.telegram.sendMessage(
+        targetId,
+        `🚫 <b>JARIMA!</b>\n\nAdmin tomonidan hisobingizdan <b>${positiveAmount} Coin</b> olib tashlandi. 📉\n\n💰 Hozirgi balansingiz: <b>${user.coins} Coin</b>`,
+        { parse_mode: "HTML" }
+      );
+    }
+  } catch (err) {
+    console.error(err);
+    ctx.reply("Xatolik yuz berdi.");
+  }
+});
+
+// ===================================================
 // 🔍 INLINE MODE (QIDIRUV TIZIMI)
 // ===================================================
 
@@ -323,6 +386,7 @@ bot.hears("👤 Mening profilim", async ctx => {
 
   await ctx.reply(
     `👤 <b>SIZNING PROFILINGIZ</b>\n\n` +
+      `🆔 ID: <code>${userId}</code>\n` +
       `📝 Ism: <b>${firstName}</b>\n` +
       `🏅 Unvon: <b>${rank}</b>\n\n` +
       `💰 Hamyon: <b>${coins} Coin</b>\n` +
