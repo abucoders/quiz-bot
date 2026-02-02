@@ -206,50 +206,92 @@ bot.on("inline_query", async ctx => {
 // ===================================================
 
 bot.start(async ctx => {
-  // Userni bazaga saqlash
   try {
-    await User.findOneAndUpdate(
-      { telegramId: ctx.from.id },
-      {
+    const payload = ctx.startPayload; // start dan keyingi yozuv (masalan: ref_12345)
+    let user = await User.findOne({ telegramId: ctx.from.id });
+
+    // 1. Agar foydalanuvchi YANGI bo'lsa (Bazada yo'q bo'lsa)
+    if (!user) {
+      // Referal ekanligini tekshiramiz
+      const isReferral = payload && payload.startsWith("ref_");
+
+      // Yangi user yaratamiz
+      user = await User.create({
+        telegramId: ctx.from.id,
         firstName: ctx.from.first_name,
         username: ctx.from.username,
-        lastActive: Date.now(),
-      },
-      { upsert: true, new: true }
-    );
-  } catch (err) {
-    console.error("User save error:", err);
-  }
+        // AGAR REFERAL BO'LSA 50 COIN, BO'LMASA 0
+        coins: isReferral ? 80 : 50,
+      });
 
-  const payload = ctx.startPayload;
+      // 2. REFERAL MUKOFOTLARI
+      if (isReferral) {
+        const referrerId = Number(payload.replace("ref_", "")); // "ref_12345" -> 12345
 
-  // A) GURUHDA START
-  if (
-    payload &&
-    (ctx.chat.type === "group" || ctx.chat.type === "supergroup")
-  ) {
-    return initGroupLobby(ctx, payload);
-  }
+        // O'zini o'zi taklif qilolmasin
+        if (referrerId !== ctx.from.id) {
+          // A) TAKLIF QILGAN ODAMGA (100 Coin)
+          const referrer = await User.findOneAndUpdate(
+            { telegramId: referrerId },
+            { $inc: { coins: 110 } }
+          );
 
-  // B) LICHKADA START
-  if (payload && ctx.chat.type === "private") {
-    return initSoloQuizSession(ctx, payload);
-  }
+          if (referrer) {
+            await bot.telegram.sendMessage(
+              referrerId,
+              `🎉 <b>Tabriklaymiz!</b>\nSizning havolangiz orqali <b>${ctx.from.first_name}</b> botga qo'shildi.\n💰 <b>Sizga 100 Coin berildi!</b>`,
+              { parse_mode: "HTML" }
+            );
+          }
 
-  // C) ODDIY MENYU
-  if (ctx.chat.type === "private") {
-    await ctx.reply(
-      `👋 <b>Xush kelibsiz, ${ctx.from.first_name}!</b>\n\nBu bot orqali testlar tuzishingiz va guruhlarda do'stlar bilan bellashingiz mumkin.`,
-      {
-        parse_mode: "HTML",
-        ...Markup.keyboard([
-          ["Yangi test tuzish", "📥 Matn orqali yuklash"],
-          ["Testlarimni ko'rish", "👤 Mening profilim"],
-        ]).resize(),
+          // B) YANGI KIRGAN ODAMGA (Xabar beramiz, coin allaqachon yozildi)
+          await ctx.reply(
+            `🎁 <b>Xush kelibsiz!</b>\nDo'stingiz taklifi bilan kirganingiz uchun sizga <b>100 Coin bonus</b> berildi! 💰`,
+            { parse_mode: "HTML" }
+          );
+        }
       }
-    );
-  } else {
-    await ctx.reply(`👋 Salom! Test ishlash uchun menga lichkada yozing.`);
+    } else {
+      // Agar user oldin bor bo'lsa, shunchaki ma'lumotini yangilab qo'yamiz
+      await User.findOneAndUpdate(
+        { telegramId: ctx.from.id },
+        {
+          firstName: ctx.from.first_name,
+          username: ctx.from.username,
+          lastActive: Date.now(),
+        }
+      );
+    }
+
+    // --- START DAVOMI (O'yinlarni ushlash) ---
+
+    // A) Guruh va Lichka o'yinlari
+    if (payload && !payload.startsWith("ref_")) {
+      if (ctx.chat.type === "group" || ctx.chat.type === "supergroup") {
+        return initGroupLobby(ctx, payload);
+      }
+      if (ctx.chat.type === "private") {
+        return initSoloQuizSession(ctx, payload);
+      }
+    }
+
+    // B) Oddiy Menyu (Faqat lichkada)
+    if (ctx.chat.type === "private") {
+      await ctx.reply(
+        `👋 <b>Asosiy Menyu</b>\n\n` + `Quyidagi bo'limlardan birini tanlang:`,
+        {
+          parse_mode: "HTML",
+          ...Markup.keyboard([
+            ["Yangi test tuzish", "📥 Matn orqali yuklash"],
+            ["Testlarimni ko'rish", "👤 Mening profilim"],
+          ]).resize(),
+        }
+      );
+    } else {
+      await ctx.reply(`👋 Salom! Test ishlash uchun menga lichkada yozing.`);
+    }
+  } catch (err) {
+    console.error("Start Error:", err);
   }
 });
 
@@ -260,27 +302,36 @@ bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz")); //
 // MENING PROFILIM
 bot.hears("👤 Mening profilim", async ctx => {
   const userId = ctx.from.id;
-  // Userni bazadan olamiz (ballari ichida bo'ladi)
   const user = await User.findOne({ telegramId: userId });
 
-  // Agar user topilmasa yoki yangi bo'lsa
+  // Agar user bazada bo'lmasa (xatolik oldini olish uchun)
   const totalScore = user ? user.totalScore : 0;
+  const coins = user ? user.coins : 0; // <--- COIN
   const count = user ? user.quizzesSolved : 0;
   const firstName = user ? user.firstName : ctx.from.first_name;
 
+  // Unvonlar
   let rank = "Boshlovchi 👶";
   if (totalScore > 50) rank = "Bilimdon 🧠";
   if (totalScore > 200) rank = "Ekspert 🎓";
   if (totalScore > 500) rank = "Professor 👨‍🏫";
   if (totalScore > 1000) rank = "Afsona 🏆";
 
+  // Referal link yasaymiz
+  const botUsername = ctx.botInfo.username;
+  const refLink = `https://t.me/${botUsername}?start=ref_${userId}`;
+
   await ctx.reply(
     `👤 <b>SIZNING PROFILINGIZ</b>\n\n` +
-      `📝 Ism: <b>${firstName}</b>\n\n` +
-      `📊 <b>Natijalar:</b>\n` +
-      `✅ Yechilgan testlar: <b>${count}</b> ta\n` +
-      `⭐️ Umumiy ball: <b>${totalScore}</b>\n\n` +
-      `🏅 Unvon: <b>${rank}</b>`,
+      `📝 Ism: <b>${firstName}</b>\n` +
+      `🏅 Unvon: <b>${rank}</b>\n\n` +
+      `💰 Hamyon: <b>${coins} Coin</b>\n` +
+      `⭐️ Umumiy ball: <b>${totalScore}</b>\n` +
+      `✅ Yechilgan testlar: <b>${count}</b> ta\n\n` +
+      `🔗 <b>Sizning referal havolangiz:</b>\n` +
+      `Do'stlarga ulashing va har bir do'stingiz uchun <b>100 Coin</b> oling!\n\n` +
+      `👇 Havolani nusxalab oling:\n` +
+      `<code>${refLink}</code>`, // Code formatida nusxalash oson bo'ladi
     { parse_mode: "HTML" }
   );
 });
