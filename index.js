@@ -390,14 +390,41 @@ bot.action(/^stats_(.+)$/, async ctx => {
 // 2. GURUH O'YINI (MULTIPLAYER LOBBY)
 // ===================================================
 
+// ===================================================
+// GURUH O'YININI BOSHLASH (VARIANTLARNI ARALASHTIRISH BILAN)
+// ===================================================
 async function initGroupLobby(ctx, quizId) {
   const quiz = await Quiz.findById(quizId);
   if (!quiz) return ctx.reply("Test topilmadi.");
 
+  // --- YANGI QO'SHILGAN QISM: Variantlarni aralashtirish ---
+  // Biz savollarni "klon" qilib olamiz, aks holda bazadagi asli o'zgarib ketishi mumkin
+  let processedQuestions = quiz.questions.map(q => {
+    let newQ = q.toObject ? q.toObject() : { ...q }; // Obyekt nusxasini olish
+
+    // Agar variantlarni aralashtirish yoqilgan bo'lsa
+    if (quiz.settings.shuffle_options) {
+      const correctText = newQ.options[newQ.correct_option_id]; // To'g'ri javob matni
+
+      // Variantlarni aralashtiramiz
+      newQ.options = newQ.options.sort(() => Math.random() - 0.5);
+
+      // To'g'ri javobning yangi indeksini topamiz
+      newQ.correct_option_id = newQ.options.indexOf(correctText);
+    }
+    return newQ;
+  });
+
+  // Savollar tartibini aralashtirish (agar kerak bo'lsa)
+  if (quiz.settings.shuffle_questions) {
+    processedQuestions = processedQuestions.sort(() => Math.random() - 0.5);
+  }
+  // -------------------------------------------------------
+
   groupGames.set(ctx.chat.id, {
     quizId: quiz._id,
     title: quiz.title,
-    questions: quiz.questions,
+    questions: processedQuestions, // <--- Aralashgan savollar ketdi
     currentQIndex: 0,
     time_limit: quiz.settings.time_limit,
     players: new Set(),
@@ -570,10 +597,22 @@ async function initSoloQuizSession(ctx, quizId) {
     const quiz = await Quiz.findById(quizId);
     if (!quiz) return ctx.reply("Test topilmadi.");
 
-    let questions = [...quiz.questions];
+    // --- YANGI QO'SHILGAN QISM: Variantlarni aralashtirish ---
+    let processedQuestions = quiz.questions.map(q => {
+      let newQ = q.toObject ? q.toObject() : { ...q };
+
+      if (quiz.settings.shuffle_options) {
+        const correctText = newQ.options[newQ.correct_option_id];
+        newQ.options = newQ.options.sort(() => Math.random() - 0.5);
+        newQ.correct_option_id = newQ.options.indexOf(correctText);
+      }
+      return newQ;
+    });
+
     if (quiz.settings.shuffle_questions) {
-      questions = questions.sort(() => Math.random() - 0.5);
+      processedQuestions = processedQuestions.sort(() => Math.random() - 0.5);
     }
+    // -------------------------------------------------------
 
     const userId = ctx.from.id;
     if (activeGames.has(userId)) {
@@ -583,7 +622,7 @@ async function initSoloQuizSession(ctx, quizId) {
 
     activeGames.set(userId, {
       quizId: quiz._id,
-      questions: questions,
+      questions: processedQuestions, // <--- Aralashganini beramiz
       currentValues: 0,
       score: 0,
       time_limit: quiz.settings.time_limit,
