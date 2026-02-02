@@ -207,6 +207,39 @@ bot.command("addcoin", async ctx => {
 });
 
 // ===================================================
+// 🛑 O'YINNI MAJBURIY TO'XTATISH (/stop)
+// ===================================================
+bot.command("stop", async ctx => {
+  // Faqat guruhlarda ishlashin
+  if (ctx.chat.type === "private")
+    return ctx.reply("Bu buyruq faqat guruhlar uchun.");
+
+  // Faqat adminlar ishlata olsin
+  const member = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
+  if (!["creator", "administrator"].includes(member.status)) {
+    return ctx.reply("❌ O'yinni faqat guruh adminlari to'xtata oladi.");
+  }
+
+  // O'yin borligini tekshirish
+  if (groupGames.has(ctx.chat.id)) {
+    const game = groupGames.get(ctx.chat.id);
+
+    // Taymerlarni o'chiramiz (xotirani tozalash)
+    if (game.timer) clearTimeout(game.timer);
+
+    // O'yinni xotiradan o'chiramiz
+    groupGames.delete(ctx.chat.id);
+
+    await ctx.reply(
+      "✅ <b>O'yin majburiy to'xtatildi.</b>\nEndi yangi test boshlashingiz mumkin.",
+      { parse_mode: "HTML" }
+    );
+  } else {
+    await ctx.reply("Hozir guruhda faol o'yin yo'q.");
+  }
+});
+
+// ===================================================
 // 🔍 INLINE MODE (QIDIRUV TIZIMI)
 // ===================================================
 
@@ -548,31 +581,33 @@ bot.action(/^stats_(.+)$/, async ctx => {
 // ===================================================
 
 // ===================================================
-// GURUH O'YININI BOSHLASH (VARIANTLARNI ARALASHTIRISH BILAN)
+// GURUH O'YININI BOSHLASH (HIMOYA BILAN)
 // ===================================================
 async function initGroupLobby(ctx, quizId) {
+  // 1. HIMOYA: Agar guruhda o'yin bor bo'lsa, yangisini ochtirmaymiz
+  if (groupGames.has(ctx.chat.id)) {
+    return ctx.reply(
+      "🚫 <b>Guruhda allaqachon o'yin ketmoqda!</b>\n\n" +
+        "Iltimos, avvalgi o'yin tugashini kuting yoki majburiy to'xtatish uchun <b>/stop</b> buyrug'ini yuboring.",
+      { parse_mode: "HTML" }
+    );
+  }
+
   const quiz = await Quiz.findById(quizId);
   if (!quiz) return ctx.reply("Test topilmadi.");
 
-  // --- YANGI QO'SHILGAN QISM: Variantlarni aralashtirish ---
-  // Biz savollarni "klon" qilib olamiz, aks holda bazadagi asli o'zgarib ketishi mumkin
+  // --- Variantlarni aralashtirish (Boya qo'shgan kodimiz) ---
   let processedQuestions = quiz.questions.map(q => {
-    let newQ = q.toObject ? q.toObject() : { ...q }; // Obyekt nusxasini olish
+    let newQ = q.toObject ? q.toObject() : { ...q };
 
-    // Agar variantlarni aralashtirish yoqilgan bo'lsa
     if (quiz.settings.shuffle_options) {
-      const correctText = newQ.options[newQ.correct_option_id]; // To'g'ri javob matni
-
-      // Variantlarni aralashtiramiz
+      const correctText = newQ.options[newQ.correct_option_id];
       newQ.options = newQ.options.sort(() => Math.random() - 0.5);
-
-      // To'g'ri javobning yangi indeksini topamiz
       newQ.correct_option_id = newQ.options.indexOf(correctText);
     }
     return newQ;
   });
 
-  // Savollar tartibini aralashtirish (agar kerak bo'lsa)
   if (quiz.settings.shuffle_questions) {
     processedQuestions = processedQuestions.sort(() => Math.random() - 0.5);
   }
@@ -581,7 +616,7 @@ async function initGroupLobby(ctx, quizId) {
   groupGames.set(ctx.chat.id, {
     quizId: quiz._id,
     title: quiz.title,
-    questions: processedQuestions, // <--- Aralashgan savollar ketdi
+    questions: processedQuestions,
     currentQIndex: 0,
     time_limit: quiz.settings.time_limit,
     players: new Set(),
