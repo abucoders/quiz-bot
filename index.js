@@ -260,12 +260,23 @@ bot.on("inline_query", async ctx => {
 
   try {
     if (query) {
-      // 1. Agar biror narsa yozsa, nomi bo'yicha qidiramiz (Regex - harf katta kichikligiga qaramaydi)
-      quizzes = await Quiz.find({
-        title: { $regex: query, $options: "i" },
-      }).limit(20);
+      // 1. Agar ID orqali qidirilayotgan bo'lsa (Masalan: start=12345...)
+      if (query.startsWith("start=")) {
+        const quizId = query.split("=")[1];
+        // ID to'g'ri ekanligini tekshiramiz
+        if (mongoose.Types.ObjectId.isValid(quizId)) {
+          const quiz = await Quiz.findById(quizId);
+          if (quiz) quizzes = [quiz]; // Faqat shu testni olamiz
+        }
+      }
+      // 2. Agar oddiy so'z yozilgan bo'lsa -> Nomi bo'yicha qidiramiz
+      else {
+        quizzes = await Quiz.find({
+          title: { $regex: query, $options: "i" },
+        }).limit(20);
+      }
     } else {
-      // 2. Agar hech narsa yozmasa, eng yangi 20 ta testni chiqaramiz
+      // 3. Agar hech narsa yozmasa, eng yangi 20 ta testni chiqaramiz
       quizzes = await Quiz.find().sort({ createdAt: -1 }).limit(20);
     }
 
@@ -275,7 +286,7 @@ bot.on("inline_query", async ctx => {
       id: q._id.toString(),
       title: q.title,
       description: `${q.questions.length} ta savol | ⏱ ${q.settings.time_limit} soniya`,
-      thumb_url: "https://cdn-icons-png.flaticon.com/512/3407/3407024.png", // Test ikonkasining rasmi
+      thumb_url: "https://cdn-icons-png.flaticon.com/512/3407/3407024.png",
       input_message_content: {
         message_text:
           `📢 <b>${q.title}</b>\n\n` +
@@ -300,8 +311,6 @@ bot.on("inline_query", async ctx => {
       },
     }));
 
-    // Natijani foydalanuvchiga ko'rsatamiz
-    // cache_time: 0 qildik, shunda yangi test qo'shilsa darhol ko'rinadi
     await ctx.answerInlineQuery(results, { cache_time: 0 });
   } catch (err) {
     console.error("Inline Query Xato:", err);
@@ -314,10 +323,12 @@ bot.on("inline_query", async ctx => {
 
 bot.start(async ctx => {
   try {
-    const payload = ctx.startPayload; // start dan keyingi yozuv (masalan: ref_12345)
+    const payload = ctx.startPayload; // start dan keyingi yozuv (masalan: ref_12345 yoki quiz_id)
     let user = await User.findOne({ telegramId: ctx.from.id });
 
-    // 1. Agar foydalanuvchi YANGI bo'lsa (Bazada yo'q bo'lsa)
+    // ----------------------------------------------------
+    // 1-QISM: FOYDALANUVCHINI RO'YXATGA OLISH
+    // ----------------------------------------------------
     if (!user) {
       // Referal ekanligini tekshiramiz
       const isReferral = payload && payload.startsWith("ref_");
@@ -327,20 +338,20 @@ bot.start(async ctx => {
         telegramId: ctx.from.id,
         firstName: ctx.from.first_name,
         username: ctx.from.username,
-        // AGAR REFERAL BO'LSA 50 COIN, BO'LMASA 0
-        coins: isReferral ? 80 : 50,
+        // Agar referal bo'lsa 100 coin (50+50), bo'lmasa 50 coin
+        coins: isReferral ? 100 : 50,
       });
 
-      // 2. REFERAL MUKOFOTLARI
+      // REFERAL MUKOFOTLARI
       if (isReferral) {
-        const referrerId = Number(payload.replace("ref_", "")); // "ref_12345" -> 12345
+        const referrerId = Number(payload.replace("ref_", "")); // ID ni ajratib olamiz
 
         // O'zini o'zi taklif qilolmasin
         if (referrerId !== ctx.from.id) {
           // A) TAKLIF QILGAN ODAMGA (100 Coin)
           const referrer = await User.findOneAndUpdate(
             { telegramId: referrerId },
-            { $inc: { coins: 110 } }
+            { $inc: { coins: 100 } }
           );
 
           if (referrer) {
@@ -351,15 +362,15 @@ bot.start(async ctx => {
             );
           }
 
-          // B) YANGI KIRGAN ODAMGA (Xabar beramiz, coin allaqachon yozildi)
+          // B) YANGI KIRGAN ODAMGA
           await ctx.reply(
-            `🎁 <b>Xush kelibsiz!</b>\nDo'stingiz taklifi bilan kirganingiz uchun sizga <b>100 Coin bonus</b> berildi! 💰`,
+            `🎁 <b>Xush kelibsiz!</b>\nDo'stingiz taklifi bilan kirganingiz uchun sizga <b>qo'shimcha bonus</b> berildi! 💰`,
             { parse_mode: "HTML" }
           );
         }
       }
     } else {
-      // Agar user oldin bor bo'lsa, shunchaki ma'lumotini yangilab qo'yamiz
+      // Agar user oldin bor bo'lsa, ma'lumotini yangilaymiz
       await User.findOneAndUpdate(
         { telegramId: ctx.from.id },
         {
@@ -370,19 +381,66 @@ bot.start(async ctx => {
       );
     }
 
-    // --- START DAVOMI (O'yinlarni ushlash) ---
-
-    // A) Guruh va Lichka o'yinlari
+    // ----------------------------------------------------
+    // 2-QISM: LINK ORQALI TESTNI OCHISH (MUHIM O'ZGARISH)
+    // ----------------------------------------------------
     if (payload && !payload.startsWith("ref_")) {
+      // A) Agar GURUHDA bo'lsa -> Darhol o'yinni ochamiz
       if (ctx.chat.type === "group" || ctx.chat.type === "supergroup") {
         return initGroupLobby(ctx, payload);
       }
+
+      // B) Agar LICHKADA bo'lsa -> Prevyu oynasini ko'rsatamiz
       if (ctx.chat.type === "private") {
-        return initSoloQuizSession(ctx, payload);
+        const quiz = await Quiz.findById(payload);
+
+        if (!quiz)
+          return ctx.reply(
+            "❌ Kechirasiz, bu test topilmadi yoki o'chirilgan."
+          );
+
+        // Linklar
+        const botUsername = ctx.botInfo.username;
+        const shareLink = `https://t.me/${botUsername}?start=${quiz._id}`;
+        const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareLink)}&text=${encodeURIComponent(quiz.title)}`;
+
+        // Chiroyli ma'lumotnoma matni
+        let caption = `📄 <b>${quiz.title}</b>\n`;
+        if (quiz.description) caption += `<i>${quiz.description}</i>\n`;
+        caption += `\n🔢 Savollar soni: <b>${quiz.questions.length} ta</b>\n`;
+        caption += `⏱ Vaqt har biriga: <b>${quiz.settings.time_limit} soniya</b>\n`;
+        caption += `👤 Muallif ID: <code>${quiz.creatorId}</code>\n\n`;
+        caption += `<i>Testni ishlash uchun quyidagi tugmalardan birini tanlang:</i>`;
+
+        return ctx.reply(caption, {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            // 1-tugma: Testni shu yerda ishlash
+            [
+              Markup.button.callback(
+                "🚀 Testni ishlashni boshlash",
+                `start_solo_${quiz._id}`
+              ),
+            ],
+
+            // 2-tugma: Guruh tanlash uchun
+            [
+              Markup.button.switchToChat(
+                "👥 Guruhda testni boshlash",
+                `start=${quiz._id}`
+              ),
+            ],
+
+            // 3-tugma: Do'stlarga ulashish
+            [Markup.button.url("🔗 Testni ulashish", shareUrl)],
+          ]),
+        });
       }
     }
 
-    // B) Oddiy Menyu (Faqat lichkada)
+    // ----------------------------------------------------
+    // 3-QISM: ODDIY MENYU (Agar link bo'lmasa)
+    // ----------------------------------------------------
     if (ctx.chat.type === "private") {
       await ctx.reply(
         `👋 <b>Asosiy Menyu</b>\n\n` + `Quyidagi bo'limlardan birini tanlang:`,
