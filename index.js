@@ -502,20 +502,98 @@ bot.hears("👤 Mening profilim", async ctx => {
   );
 });
 
-bot.hears("Testlarimni ko'rish", async ctx => {
-  try {
-    const quizzes = await Quiz.find({ creatorId: ctx.from.id });
-    if (quizzes.length === 0) return ctx.reply("Sizda testlar yo'q.");
+// ===================================================
+// 📜 TESTLARIMNI KO'RISH (PAGINATSIYA BILAN)
+// ===================================================
 
-    let msg = "<b>Sizning testlaringiz:</b>\n\n";
-    quizzes.forEach((q, i) => {
-      msg += `${i + 1}. <b>${q.title}</b> - /view_${q._id}\n`;
-    });
-    ctx.reply(msg, { parse_mode: "HTML" });
-  } catch (e) {
-    console.error(e);
+// Yordamchi funksiya: Ro'yxatni shakllantirish
+async function showUserQuizzes(ctx, page = 1) {
+  const limit = 5; // Bir sahifada nechta test chiqsin?
+  const skip = (page - 1) * limit;
+  const userId = ctx.from.id;
+
+  // Bazadan testlarni olamiz
+  const totalQuizzes = await Quiz.countDocuments({ creatorId: userId });
+  const quizzes = await Quiz.find({ creatorId: userId })
+    .sort({ createdAt: -1 }) // Eng yangisi tepada
+    .skip(skip)
+    .limit(limit);
+
+  if (totalQuizzes === 0) {
+    return ctx.reply("Sizda hali tuzilgan testlar yo'q.");
   }
+
+  let msg = `📂 <b>Sizning testlaringiz:</b>\n(Jami: ${totalQuizzes} ta)\n\n`;
+
+  quizzes.forEach((q, index) => {
+    // Raqamlash (Umumiy ro'yxat bo'yicha)
+    const globalIndex = skip + index + 1;
+
+    // Aralashtirish statusi uchun ikonka
+    let shuffleIcon = "⬇️ aralashtirilmaydi";
+    if (q.settings.shuffle_questions && q.settings.shuffle_options)
+      shuffleIcon = "🔀 barchasi";
+    else if (q.settings.shuffle_questions) shuffleIcon = "🔀 savollar";
+    else if (q.settings.shuffle_options) shuffleIcon = "🔀 javoblar";
+
+    // Vaqtni chiroyli ko'rsatish
+    let timeText = `${q.settings.time_limit} soniya`;
+    if (q.settings.time_limit >= 60) {
+      timeText = `${Math.floor(q.settings.time_limit / 60)} daqiqa`;
+    }
+
+    // Xabar matni (Rasmdagidek format)
+    msg += `<b>${globalIndex}. ${q.title}</b> — <i>${q.plays || 0} kishi ishladi</i>\n`;
+    msg += `🖊 ${q.questions.length} ta savol • ⏱ ${timeText} • ${shuffleIcon}\n`;
+    msg += `/view_${q._id}\n\n`;
+  });
+
+  // PAGINATSIYA TUGMALARI
+  const totalPages = Math.ceil(totalQuizzes / limit);
+  const buttons = [];
+
+  if (totalPages > 1) {
+    const row = [];
+    // Orqaga tugmasi
+    if (page > 1) {
+      row.push(Markup.button.callback("⬅️", `my_quizzes_page_${page - 1}`));
+    }
+    // O'rtadagi raqam
+    row.push(Markup.button.callback(`• ${page} / ${totalPages} •`, "noop"));
+
+    // Oldinga tugmasi
+    if (page < totalPages) {
+      row.push(Markup.button.callback("➡️", `my_quizzes_page_${page + 1}`));
+    }
+    buttons.push(row);
+  }
+
+  // Xabarni yuborish yoki yangilash
+  if (ctx.callbackQuery) {
+    await ctx.editMessageText(msg, {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard(buttons),
+    });
+  } else {
+    await ctx.reply(msg, {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard(buttons),
+    });
+  }
+}
+
+// 1. Menyudan bosilganda (1-sahifa)
+bot.hears("Testlarimni ko'rish", ctx => showUserQuizzes(ctx, 1));
+
+// 2. Tugma bosilganda (Keyingi sahifalar)
+bot.action(/^my_quizzes_page_(.+)$/, async ctx => {
+  const page = Number(ctx.match[1]);
+  await ctx.answerCbQuery();
+  await showUserQuizzes(ctx, page);
 });
+
+// "noop" tugmasi (shunchaki ko'rsatish uchun, bosganda hech narsa qilmaydi)
+bot.action("noop", ctx => ctx.answerCbQuery());
 
 // --- TESTNI KO'RISH VA ULASHISH ---
 bot.hears(/^\/view_(.+)$/, async ctx => {
@@ -789,7 +867,12 @@ async function sendGroupQuestion(chatId, telegram) {
   }
 
   try {
-    await telegram.sendQuiz(chatId, q.question, q.options, {
+    // --- O'ZGARISH: Raqam qo'shamiz (1. Savol...) ---
+    const questionNum = game.currentQIndex + 1;
+    const questionText = `${questionNum}. ${q.question}`;
+    // ------------------------------------------------
+
+    await telegram.sendQuiz(chatId, questionText, q.options, {
       is_anonymous: false,
       correct_option_id: q.correct_option_id,
       explanation: q.explanation,
@@ -994,7 +1077,12 @@ async function sendSoloQuestion(userId) {
   }
 
   try {
-    await bot.telegram.sendQuiz(game.chatId, q.question, q.options, {
+    // --- O'ZGARISH: Raqam qo'shamiz (1. Savol...) ---
+    const questionNum = game.currentValues + 1;
+    const questionText = `${questionNum}. ${q.question}`;
+    // ------------------------------------------------
+
+    await bot.telegram.sendQuiz(game.chatId, questionText, q.options, {
       is_anonymous: false,
       correct_option_id: q.correct_option_id,
       explanation: q.explanation,
