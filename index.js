@@ -8,6 +8,14 @@ const createQuizScene = require("./scenes/createQuizScene");
 const importQuizScene = require("./scenes/importQuizScene"); // Yangi sahnani ulash
 const adminScene = require("./scenes/adminScene");
 const http = require("http");
+const {
+  editTitleScene,
+  editDescScene,
+  editTimerScene,
+  editShuffleScene,
+  addQuestionScene,
+} = require("./scenes/editQuizScenes");
+
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer((req, res) => {
@@ -27,8 +35,18 @@ mongoose
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Sahnalarni ro'yxatga olish
-const stage = new Scenes.Stage([createQuizScene, importQuizScene, adminScene]); // <--- QO'SHILDI
+// SAHNALARNI RO'YXATGA OLISH (Stage ichiga qo'shing)
+const stage = new Scenes.Stage([
+  createQuizScene,
+  importQuizScene,
+  adminScene,
+  // YANGI SAHNALAR:
+  editTitleScene,
+  editDescScene,
+  editTimerScene,
+  editShuffleScene,
+  addQuestionScene,
+]);
 
 bot.use(session());
 bot.use(stage.middleware());
@@ -625,6 +643,7 @@ bot.hears(/^\/view_(.+)$/, async ctx => {
         ),
       ],
       [Markup.button.url("👥 Guruhda boshlash", groupLink)],
+      [Markup.button.callback("📝 Testni tahrirlash", `edit_main_${quiz._id}`)],
       [
         Markup.button.callback("📊 Statistika", `stats_${quiz._id}`),
         Markup.button.callback("🗑 O'chirish", `delete_quiz_${quiz._id}`),
@@ -818,6 +837,7 @@ bot.action(/^view_quiz_menu_(.+)$/, async ctx => {
         ),
       ],
       [Markup.button.url("👥 Guruhda boshlash", groupLink)],
+      [Markup.button.callback("📝 Testni tahrirlash", `edit_main_${quiz._id}`)],
       [
         Markup.button.callback("📊 Statistika", `stats_${quiz._id}`),
         Markup.button.callback("🗑 O'chirish", `delete_quiz_${quiz._id}`),
@@ -1366,3 +1386,141 @@ bot
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+
+// ===================================================
+// ⚙️ TAHRIRLASH (EDIT MENU HANDLERS)
+// ===================================================
+
+// 1. ASOSIY TAHRIRLASH MENYUSI
+bot.action(/^edit_main_(.+)$/, async ctx => {
+  const quizId = ctx.match[1];
+  const quiz = await Quiz.findById(quizId);
+  if (!quiz) return ctx.answerCbQuery("Test topilmadi", true);
+
+  // Muallif ekanligini tekshirish
+  if (quiz.creatorId !== ctx.from.id) {
+    return ctx.answerCbQuery("Faqat muallif tahrirlay oladi!", true);
+  }
+
+  const msg = `⚙️ <b>TAHRIRLASH BO'LIMI</b>\n\nTest: <b>${quiz.title}</b>\nNimani o'zgartiramiz?`;
+
+  await ctx.editMessageText(msg, {
+    parse_mode: "HTML",
+    ...Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          "📝 Savollarni tahrirlash",
+          `edit_qs_menu_${quizId}`
+        ),
+      ],
+      [
+        Markup.button.callback(
+          "✏️ Sarlavhani tahrirlash",
+          `edit_title_${quizId}`
+        ),
+      ],
+      [Markup.button.callback("📝 Tavsifni tahrirlash", `edit_desc_${quizId}`)],
+      [Markup.button.callback("⏱ Taymer sozlamalari", `edit_timer_${quizId}`)],
+      [
+        Markup.button.callback(
+          "🔀 Aralashtirish sozlamalari",
+          `edit_shuffle_${quizId}`
+        ),
+      ],
+      [Markup.button.callback("« Orqaga", `view_quiz_menu_${quizId}`)],
+    ]),
+  });
+});
+
+// 2. SAVOLLARNI TAHRIRLASH MENYUSI
+bot.action(/^edit_qs_menu_(.+)$/, async ctx => {
+  const quizId = ctx.match[1];
+  const quiz = await Quiz.findById(quizId);
+
+  await ctx.editMessageText(
+    `📝 <b>Savollar tahriri</b>\nJami savollar: ${quiz.questions.length} ta`,
+    {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "➕ Yangi savol qo'shish",
+            `add_question_${quizId}`
+          ),
+        ],
+        [
+          Markup.button.callback(
+            "🗑 Oxirgi savolni o'chirish",
+            `del_last_question_${quizId}`
+          ),
+        ],
+        [Markup.button.callback("« Ortga qaytish", `edit_main_${quizId}`)],
+      ]),
+    }
+  );
+});
+
+// 3. OXIRGI SAVOLNI O'CHIRISH
+bot.action(/^del_last_question_(.+)$/, async ctx => {
+  const quizId = ctx.match[1];
+  const quiz = await Quiz.findById(quizId);
+
+  if (quiz.questions.length === 0) {
+    return ctx.answerCbQuery("Savollar qolmadi!", true);
+  }
+
+  // Arraydan oxirgisini olib tashlaymiz
+  await Quiz.findByIdAndUpdate(quizId, { $pop: { questions: 1 } });
+
+  await ctx.answerCbQuery("Oxirgi savol o'chirildi ✅");
+  // Menyuni yangilash
+  return ctx.editMessageText(
+    `📝 <b>Savollar tahriri</b>\nJami savollar: ${quiz.questions.length - 1} ta`,
+    {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "➕ Yangi savol qo'shish",
+            `add_question_${quizId}`
+          ),
+        ],
+        [
+          Markup.button.callback(
+            "🗑 Oxirgi savolni o'chirish",
+            `del_last_question_${quizId}`
+          ),
+        ],
+        [Markup.button.callback("« Ortga qaytish", `edit_main_${quizId}`)],
+      ]),
+    }
+  );
+});
+
+// 4. SAHNALARGA KIRISH (ENTRY POINTS)
+// Har bir tugma bosilganda sessiyaga ID ni saqlab, tegishli sahnaga kiramiz
+
+bot.action(/^edit_title_(.+)$/, ctx => {
+  ctx.session.editQuizId = ctx.match[1];
+  ctx.scene.enter("edit_quiz_title");
+});
+
+bot.action(/^edit_desc_(.+)$/, ctx => {
+  ctx.session.editQuizId = ctx.match[1];
+  ctx.scene.enter("edit_quiz_desc");
+});
+
+bot.action(/^edit_timer_(.+)$/, ctx => {
+  ctx.session.editQuizId = ctx.match[1];
+  ctx.scene.enter("edit_quiz_timer");
+});
+
+bot.action(/^edit_shuffle_(.+)$/, ctx => {
+  ctx.session.editQuizId = ctx.match[1];
+  ctx.scene.enter("edit_quiz_shuffle");
+});
+
+bot.action(/^add_question_(.+)$/, ctx => {
+  ctx.session.editQuizId = ctx.match[1];
+  ctx.scene.enter("add_quiz_question");
+});
