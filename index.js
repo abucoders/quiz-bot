@@ -705,22 +705,125 @@ bot.action(/^delete_quiz_(.+)$/, async ctx => {
   }
 });
 
-// STATISTIKA
+// ===================================================
+// 📊 STATISTIKA (TOP REYTING - YANGILANGAN)
+// ===================================================
+
 bot.action(/^stats_(.+)$/, async ctx => {
   const quizId = ctx.match[1];
-  const results = await Result.find({ quizId: quizId })
-    .sort({ score: -1 })
-    .limit(10);
 
-  let msg = `📊 <b>Top 10 Natijalar:</b>\n\n`;
-  if (results.length === 0) msg += "Natijalar yo'q.";
-  else
-    results.forEach(
-      (r, i) => (msg += `${i + 1}. ${r.userName} — ${r.score} ball\n`)
-    );
+  try {
+    // 1. Test ma'lumotlarini olamiz (Nomi va vaqti uchun)
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz) return ctx.answerCbQuery("Test topilmadi.", true);
 
-  await ctx.reply(msg, { parse_mode: "HTML" });
-  await ctx.answerCbQuery();
+    // 2. Jami qatnashchilar sonini hisoblaymiz (Unique)
+    const totalParticipants = await Result.distinct("userId", {
+      quizId: new mongoose.Types.ObjectId(quizId),
+    });
+    const participantsCount = totalParticipants.length;
+
+    // 3. TOP REYTINGNI TUZISH (Aggregation)
+    const topResults = await Result.aggregate([
+      // A) Shu testga tegishli natijalarni olamiz
+      { $match: { quizId: new mongoose.Types.ObjectId(quizId) } },
+
+      // B) Avval ball bo'yicha (kamayish), keyin vaqt bo'yicha saralaymiz
+      { $sort: { score: -1, finishedAt: 1 } },
+
+      // C) Har bir userning faqat BITTA (eng yaxshi) natijasini olib qolamiz
+      {
+        $group: {
+          _id: "$userId", // User ID bo'yicha guruhlash
+          userName: { $first: "$userName" }, // Ismini saqlash
+          bestScore: { $first: "$score" }, // Eng yuqori ballni olish
+          attempts: { $sum: 1 }, // Necha marta ishlaganini sanash (qiziq bo'lsa)
+        },
+      },
+
+      // D) Endi toza ro'yxatni yana ball bo'yicha saralaymiz
+      { $sort: { bestScore: -1 } },
+
+      // E) Faqat Top 20 talikni olamiz
+      { $limit: 20 },
+    ]);
+
+    // 4. Xabarni shakllantirish
+    let msg = `🏆 <b>“${quiz.title}” testidagi eng yuqori natijalar</b>\n\n`;
+    msg += `🖊 <b>${quiz.questions.length}</b> ta savol\n`;
+    msg += `⏱ Har bir savolga <b>${quiz.settings.time_limit}</b> soniya\n`;
+    msg += `🤓 <b>${participantsCount}</b> kishi testda qatnashdi\n\n`;
+
+    if (topResults.length === 0) {
+      msg += "<i>Hozircha natijalar yo'q. Birinchi bo'lib ishlang!</i>";
+    } else {
+      topResults.forEach((r, i) => {
+        let rank = `${i + 1}.`;
+        if (i === 0) rank = "🥇";
+        if (i === 1) rank = "🥈";
+        if (i === 2) rank = "🥉";
+
+        // Ism (HTML teglaridan tozalab)
+        const safeName = r.userName
+          ? r.userName.replace(/</g, "&lt;")
+          : "Noma'lum";
+
+        msg += `${rank} <b>${safeName}</b> – ${r.bestScore}\n`;
+      });
+    }
+
+    // 5. Xabarni chiqarish
+    // Eski xabarni o'chirib yangisini yozamiz yoki edit qilamiz
+    await ctx.editMessageText(msg, {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "« Testga qaytish",
+            `view_quiz_menu_${quizId}`
+          ),
+        ], // Orqaga qaytish tugmasi
+      ]),
+    });
+  } catch (e) {
+    console.error("Stats Error:", e);
+    await ctx.answerCbQuery("Statistikani yuklashda xatolik.", true);
+  }
+});
+
+// "Testga qaytish" tugmasi uchun handler (Agar yo'q bo'lsa qo'shib qo'ying)
+bot.action(/^view_quiz_menu_(.+)$/, async ctx => {
+  const quizId = ctx.match[1];
+  const quiz = await Quiz.findById(quizId);
+  if (!quiz) return ctx.deleteMessage();
+
+  // Bu yerda o'sha "view_" dagi menyuni qayta chizamiz
+  const botUser = ctx.botInfo.username;
+  const privateLink = `https://t.me/${botUser}?start=${quiz._id}`;
+  const groupLink = `https://t.me/${botUser}?startgroup=${quiz._id}`;
+
+  let statsText = `<b>${quiz.title}</b>\n`;
+  if (quiz.description) statsText += `<i>${quiz.description}</i>\n`;
+  statsText += `\n🖊 ${quiz.questions.length} ta savol\n`;
+  statsText += `⏱ ${quiz.settings.time_limit} soniya\n\n`;
+  statsText += `🔗 <b>Ulashish havolasi:</b>\n${privateLink}`;
+
+  await ctx.editMessageText(statsText, {
+    parse_mode: "HTML",
+    ...Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          "▶️ Yakkaxon boshlash",
+          `start_solo_${quiz._id}`
+        ),
+      ],
+      [Markup.button.url("👥 Guruhda boshlash", groupLink)],
+      [
+        Markup.button.callback("📊 Statistika", `stats_${quiz._id}`),
+        Markup.button.callback("🗑 O'chirish", `delete_quiz_${quiz._id}`),
+      ],
+    ]),
+  });
 });
 
 // ===================================================
