@@ -796,21 +796,27 @@ async function finishGroupGame(chatId, telegram) {
 
   if (game.timer) clearTimeout(game.timer);
 
+  // Ballar bo'yicha saralaymiz
   const sortedScores = [...game.scores.entries()].sort((a, b) => b[1] - a[1]);
+
   let msg = `🏁 <b>O'yin yakunlandi!</b>\n\n🏆 <b>G'oliblar ro'yxati:</b>\n\n`;
 
+  // 3-O'ZGARISH: Sikl hamma uchun aylanadi (limit qo'ymaymiz)
   for (let i = 0; i < sortedScores.length; i++) {
     const [userId, score] = sortedScores[i];
     const name = game.playerNames.get(userId) || "Foydalanuvchi";
-    let medal = "👤";
-    if (i === 0) medal = "🥇";
-    if (i === 1) medal = "🥈";
-    if (i === 2) medal = "🥉";
 
-    msg += `${medal} <b>${name}</b>: ${score} ball\n`;
+    // Medal yoki shunchaki raqam berish
+    let prefix = "";
+    if (i === 0) prefix = "🥇";
+    else if (i === 1) prefix = "🥈";
+    else if (i === 2) prefix = "🥉";
+    else prefix = `${i + 1}.`; // 4., 5. va hokazo
 
+    msg += `${prefix} <b>${name}</b>: ${score} ball\n`;
+
+    // Bazaga yozish (faqat mavjud userlar uchun)
     try {
-      // 1. Tarixga yozish
       await Result.create({
         userId: userId,
         userName: name,
@@ -819,7 +825,6 @@ async function finishGroupGame(chatId, telegram) {
         totalQuestions: game.questions.length,
       });
 
-      // 2. User ballini oshirish
       await User.findOneAndUpdate(
         { telegramId: userId },
         {
@@ -829,12 +834,13 @@ async function finishGroupGame(chatId, telegram) {
           },
         }
       );
-    } catch (e) {}
+    } catch (e) {
+      // User bazada bo'lmasa (masalan, start bosmagan bo'lsa), shunchaki o'tkazib yuboramiz
+    }
   }
 
   msg += `\nJami savollar: ${game.questions.length} ta`;
 
-  // --- O'ZGARISH: TUGMA QO'SHILDI ---
   try {
     await telegram.sendMessage(chatId, msg, {
       parse_mode: "HTML",
@@ -852,7 +858,6 @@ async function finishGroupGame(chatId, telegram) {
   } catch (e) {
     console.log("Xabar yuborishda xato:", e);
   }
-  // ----------------------------------
 
   groupGames.delete(chatId);
 }
@@ -1034,18 +1039,22 @@ async function finishSoloQuiz(userId) {
 }
 
 // ===================================================
-// 4. JAVOBLARNI QABUL QILISH (MARKAZIY LOGIKA)
+// 4. JAVOBLARNI QABUL QILISH (TUZATILDI)
 // ===================================================
 
 bot.on("poll_answer", async ctx => {
   const userId = ctx.pollAnswer.user.id;
+  const userName = ctx.pollAnswer.user.first_name; // Ismini olamiz
   const answer = ctx.pollAnswer;
 
   let groupGame = null;
   let groupChatId = null;
 
+  // Guruh o'yinini qidiramiz
   for (const [chatId, game] of groupGames.entries()) {
-    if (game.status === "playing" && game.players.has(userId)) {
+    // 1-O'ZGARISH: "&& game.players.has(userId)" degan shartni OLIB TASHLADIK.
+    // Endi shunchaki o'yin ketayotgan bo'lsa bo'ldi.
+    if (game.status === "playing") {
       groupGame = game;
       groupChatId = chatId;
       break;
@@ -1053,15 +1062,26 @@ bot.on("poll_answer", async ctx => {
   }
 
   if (groupGame) {
+    // 2-O'ZGARISH: Agar user ro'yxatda bo'lmasa, uni QO'SHIB QO'YAMIZ
+    if (!groupGame.players.has(userId)) {
+      groupGame.players.add(userId);
+      groupGame.scores.set(userId, 0);
+      groupGame.playerNames.set(userId, userName);
+    }
+
     const currentQ = groupGame.questions[groupGame.currentQIndex];
+
+    // Agar bu savolga javob bergan bo'lsa, qayta hisoblamaymiz
     if (groupGame.answeredUsers.has(userId)) return;
     groupGame.answeredUsers.add(userId);
 
+    // Ball berish
     if (currentQ && answer.option_ids[0] === currentQ.correct_option_id) {
       const oldScore = groupGame.scores.get(userId) || 0;
       groupGame.scores.set(userId, oldScore + 1);
     }
 
+    // Agar HAMMA javob berib bo'lgan bo'lsa, tezroq keyingisiga o'tamiz
     if (groupGame.answeredUsers.size === groupGame.players.size) {
       if (groupGame.timer) clearTimeout(groupGame.timer);
       setTimeout(() => {
@@ -1071,11 +1091,10 @@ bot.on("poll_answer", async ctx => {
     return;
   }
 
+  // --- Yakkaxon o'yin (o'zgarishsiz qoladi) ---
   const soloGame = activeGames.get(userId);
   if (soloGame) {
     if (soloGame.timer) clearTimeout(soloGame.timer);
-
-    // --- Javob berdimi, demak u faol ---
     soloGame.emptyCount = 0;
 
     const currentQ = soloGame.questions[soloGame.currentValues];
