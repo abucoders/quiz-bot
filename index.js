@@ -401,36 +401,30 @@ bot.command("stop", async ctx => {
 });
 
 // ===================================================
-// 🔍 INLINE MODE (QIDIRUV TIZIMI)
+// 🔍 INLINE MODE (YANGILANGAN - 100% ISHLAYDI)
 // ===================================================
 
 bot.on("inline_query", async ctx => {
-  const query = ctx.inlineQuery.query; // Foydalanuvchi yozgan matn
+  const query = ctx.inlineQuery.query;
   let quizzes = [];
 
   try {
     if (query) {
-      // 1. Agar ID orqali qidirilayotgan bo'lsa (Masalan: start=12345...)
       if (query.startsWith("start=")) {
         const quizId = query.split("=")[1];
-        // ID to'g'ri ekanligini tekshiramiz
         if (mongoose.Types.ObjectId.isValid(quizId)) {
           const quiz = await Quiz.findById(quizId);
-          if (quiz) quizzes = [quiz]; // Faqat shu testni olamiz
+          if (quiz) quizzes = [quiz];
         }
-      }
-      // 2. Agar oddiy so'z yozilgan bo'lsa -> Nomi bo'yicha qidiramiz
-      else {
+      } else {
         quizzes = await Quiz.find({
           title: { $regex: query, $options: "i" },
         }).limit(20);
       }
     } else {
-      // 3. Agar hech narsa yozmasa, eng yangi 20 ta testni chiqaramiz
       quizzes = await Quiz.find().sort({ createdAt: -1 }).limit(20);
     }
 
-    // Natijalarni Telegram tushunadigan formatga o'tkazamiz
     const results = quizzes.map(q => ({
       type: "article",
       id: q._id.toString(),
@@ -438,27 +432,12 @@ bot.on("inline_query", async ctx => {
       description: `${q.questions.length} ta savol | ⏱ ${q.settings.time_limit} soniya`,
       thumb_url: "https://cdn-icons-png.flaticon.com/512/3407/3407024.png",
       input_message_content: {
-        message_text:
-          `📢 <b>${q.title}</b>\n\n` +
-          `🖊 Savollar soni: ${q.questions.length} ta\n` +
-          `⏱ Vaqt: ${q.settings.time_limit} soniya\n\n` +
-          `👇 Testni ishlash uchun tugmani bosing:`,
-        parse_mode: "HTML",
+        // --- ENG MUHIM JOYI SHU YERDA ---
+        // Test tanlanganda srazi buyruq yuboriladi.
+        // Bu buyruq orqali bot guruh ID sini aniqlay oladi.
+        message_text: `/start_lobby_${q._id}`,
       },
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "🚀 Testni boshlash",
-              url: `https://t.me/${ctx.botInfo.username}?start=${q._id}`,
-            },
-            {
-              text: "👥 Guruhda boshlash",
-              url: `https://t.me/${ctx.botInfo.username}?startgroup=${q._id}`,
-            },
-          ],
-        ],
-      },
+      // reply_markup (tugmalar) kerak emas, chunki buyruq ishga tushadi
     }));
 
     await ctx.answerInlineQuery(results, { cache_time: 0 });
@@ -1026,6 +1005,9 @@ async function initGroupLobby(ctx, quizId) {
   groupGames.set(ctx.chat.id, {
     quizId: quiz._id,
     title: quiz.title,
+    description: quiz.description,
+    creatorId: quiz.creatorId,
+    createdAt: quiz.createdAt,
     questions: processedQuestions,
     currentQIndex: 0,
     time_limit: quiz.settings.time_limit,
@@ -1099,6 +1081,9 @@ bot.action("join_game", async ctx => {
   ctx.answerCbQuery("Muvaffaqiyatli qo'shildingiz!");
 });
 
+// ===================================================
+// GURUH O'YININI BOSHLASH (YANGILANGAN - INFO BILAN)
+// ===================================================
 bot.action("start_group_game", async ctx => {
   const game = groupGames.get(ctx.chat.id);
   if (!game) return ctx.answerCbQuery("O'yin topilmadi.");
@@ -1111,9 +1096,31 @@ bot.action("start_group_game", async ctx => {
 
   game.status = "playing";
   await ctx.deleteMessage().catch(() => {});
-  await ctx.reply(`🚀 <b>O'yin boshlandi!</b>\nBarchaga omad!`, {
+
+  // --- VAQTNI HISOBLASH ---
+  const createdDate = new Date(game.createdAt);
+  const now = new Date();
+  const diffTime = Math.abs(now - createdDate);
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+  // --- LINK YASASH ---
+  const botUsername = ctx.botInfo.username;
+  const privateLink = `https://t.me/${botUsername}?start=${game.quizId}`;
+
+  // --- CHIROYLI XABAR ---
+  const msg =
+    `🚀 <b>O'yin boshlandi!</b>\n\n` +
+    `📚 <b>Test nomi:</b> ${game.title}\n` +
+    `👤 <b>Muallif ID:</b> <code>${game.creatorId}</code>\n` +
+    `📅 <b>Yaratilgan sana:</b> ${diffDays} kun oldin\n\n` +
+    `🔗 <a href="${privateLink}">Botda o'zingiz ishlash uchun havola</a>\n\n` +
+    `<i>Barchaga omad! Savollar kelmoqda...</i>`;
+
+  await ctx.reply(msg, {
     parse_mode: "HTML",
+    disable_web_page_preview: true, // Linkdagi rasm chiqib ketmasligi uchun
   });
+
   sendGroupQuestion(ctx.chat.id, ctx.telegram);
 });
 
@@ -1828,4 +1835,25 @@ bot.action("vote_stop_game", async ctx => {
   } catch (e) {
     // Xabar o'zgarmasa xato bermasligi uchun
   }
+});
+
+// ===================================================
+// GURUHDA TESTNI SRAZI OCHISH (COMMAND HANDLER)
+// ===================================================
+bot.hears(/^\/start_lobby_(.+)$/, async ctx => {
+  const quizId = ctx.match[1];
+
+  // 1. Faqat guruhlarda ishlashi kerak
+  if (ctx.chat.type === "private") {
+    return ctx.reply(
+      "🚫 Bu funksiya faqat guruhlarda ishlaydi. Guruhga kiring va @botname deb yozing."
+    );
+  }
+
+  // 2. Buyruqni o'chirib tashlaymiz (Chatni toza saqlash uchun)
+  await ctx.deleteMessage().catch(() => {});
+
+  // 3. Lobbi ochamiz
+  // Bu funksiya ctx.chat.id ni bemalol o'qiy oladi, chunki bu oddiy xabar
+  return initGroupLobby(ctx, quizId);
 });
