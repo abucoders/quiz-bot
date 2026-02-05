@@ -49,6 +49,96 @@ const stage = new Scenes.Stage([
 ]);
 
 bot.use(session());
+
+// ===================================================
+// 🛑 GLOBAL HIMOYA (ANT-STUCK)
+// ===================================================
+// Bu kod user sahnada qolib ketsa ham, /stop yoki /start bossa qutqaradi
+bot.use(async (ctx, next) => {
+  if (ctx.message && ctx.message.text) {
+    const text = ctx.message.text;
+
+    // Agar buyruq /start yoki /stop bo'lsa
+    if (text === "/start" || text === "/stop") {
+      // 1. SAHNADAN MAJBURAN CHIQARISH
+      // Agar sessiyada sahna bo'lsa, uni o'chirib tashlaymiz
+      if (ctx.session && ctx.session.__scenes) {
+        delete ctx.session.__scenes;
+      }
+
+      // 2. AGAR /STOP BO'LSA - O'YINLARNI HAM TO'XTATAMIZ VA MENYU BERAMIZ
+      if (text === "/stop") {
+        const userId = ctx.from.id;
+
+        // A) Lichka o'yinini to'xtatish
+        if (activeGames.has(userId)) {
+          const game = activeGames.get(userId);
+          if (game.timer) clearTimeout(game.timer);
+          activeGames.delete(userId);
+        }
+
+        // B) Guruh o'yinini to'xtatish (Faqat admin bo'lsa)
+        if (ctx.chat.type !== "private" && groupGames.has(ctx.chat.id)) {
+          // Guruhda bo'lsa, faqat admin to'xtata oladi deb tekshirish shart emas,
+          // chunki bu "shaxsiy" stop. Lekin guruh o'yinini buzmaslik uchun
+          // shunchaki "keyingi qadamga" o'tkazmaymiz va javob beramiz.
+          // Agar guruhni to'liq to'xtatmoqchi bo'lsangiz, bu yerga admin tekshiruvi kerak.
+        }
+
+        // C) BOSH MENYUNI CHIQARISH (Faqat lichkada)
+        if (ctx.chat.type === "private") {
+          await ctx.reply(
+            "🛑 <b>Jarayon to'xtatildi.</b>\n\nBosh menyudasiz:",
+            {
+              parse_mode: "HTML",
+              ...Markup.keyboard([
+                ["Yangi test tuzish", "📥 Matn orqali yuklash"],
+                ["Testlarimni ko'rish", "👤 Mening profilim"],
+              ]).resize(),
+            }
+          );
+          return; // Kod shu yerda tugaydi, boshqa joyga o'tmaydi
+        }
+      }
+    }
+  }
+  // Boshqa barcha holatlarda davom etamiz
+  return next();
+});
+
+// ===================================================
+// 🔒 O'YIN VAQTIDA BOSHQA BUYRUQLARNI BLOKLASH
+// ===================================================
+bot.use(async (ctx, next) => {
+  // Faqat shaxsiy chatda va user o'yinda bo'lsa
+  if (
+    ctx.chat?.type === "private" &&
+    ctx.from?.id &&
+    activeGames.has(ctx.from.id)
+  ) {
+    // 1. Texnik yangilanishlarga (Poll Answer) ruxsat beramiz (aks holda o'yin ishlamaydi)
+    if (ctx.pollAnswer) return next();
+
+    // 2. Tugmalarga (Callback) ruxsat beramiz (masalan, "stop" tugmasi uchun)
+    if (ctx.callbackQuery) return next();
+
+    // 3. Matnli xabarlarni tekshiramiz
+    if (ctx.message?.text) {
+      const text = ctx.message.text;
+      // Faqat /stop va /start ga ruxsat
+      if (text === "/stop" || text === "/start") return next();
+    }
+
+    // ⛔️ Qolgan hamma narsani bloklaymiz va ogohlantiramiz
+    return ctx.reply(
+      "⚠️ <b>Siz hozir test ishlayapsiz!</b>\n\nBoshqa buyruqlar ishlamaydi. Testni tugating yoki /stop ni bosing.",
+      { parse_mode: "HTML" }
+    );
+  }
+
+  return next();
+});
+
 bot.use(stage.middleware());
 
 // --- XOTIRA (RAM) ---
@@ -225,46 +315,88 @@ bot.command("addcoin", async ctx => {
 });
 
 // ===================================================
-// 🛑 UNIVERSAL STOP KOMANDASI
+// 🛑 STOP KOMANDASI (ADMIN VA OVOZ BERISH ORQALI)
 // ===================================================
 bot.command("stop", async ctx => {
   const userId = ctx.from.id;
 
-  // A) LICHKA (YAKKAXON O'YIN) UCHUN
+  // 1. LICHKA (YAKKAXON O'YIN) UCHUN
   if (ctx.chat.type === "private") {
     if (activeGames.has(userId)) {
       const game = activeGames.get(userId);
-      if (game.timer) clearTimeout(game.timer); // Taymerni o'chiramiz
-      activeGames.delete(userId); // O'yinni o'chiramiz
-
-      return ctx.reply(
-        "✅ <b>Test to'xtatildi.</b>\nQayta boshlash uchun menyudan tanlang.",
-        { parse_mode: "HTML" }
-      );
+      if (game.timer) clearTimeout(game.timer);
+      activeGames.delete(userId);
+      return ctx.reply("✅ <b>Test to'xtatildi.</b>", { parse_mode: "HTML" });
     } else {
       return ctx.reply("Sizda hozir aktiv test yo'q.");
     }
   }
 
-  // B) GURUH UCHUN
+  // 2. GURUH UCHUN
   if (ctx.chat.type === "group" || ctx.chat.type === "supergroup") {
-    // Admin ekanligini tekshiramiz
-    const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
-    if (!["creator", "administrator"].includes(member.status)) {
-      return ctx.reply("❌ O'yinni faqat guruh adminlari to'xtata oladi.");
-    }
+    const game = groupGames.get(ctx.chat.id);
 
-    if (groupGames.has(ctx.chat.id)) {
-      const game = groupGames.get(ctx.chat.id);
-      if (game.timer) clearTimeout(game.timer);
-      groupGames.delete(ctx.chat.id);
-
-      return ctx.reply("✅ <b>O'yin majburiy to'xtatildi.</b>", {
-        parse_mode: "HTML",
-      });
-    } else {
+    // Agar o'yin bo'lmasa
+    if (!game) {
       return ctx.reply("Guruhda faol o'yin yo'q.");
     }
+
+    // Admin ekanligini tekshiramiz
+    const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
+    const isAdmin = ["creator", "administrator"].includes(member.status);
+
+    // --- A) AGAR ADMIN BO'LSA (DARHOL TO'XTATADI) ---
+    if (isAdmin) {
+      if (game.timer) clearTimeout(game.timer);
+      groupGames.delete(ctx.chat.id);
+      return ctx.reply(
+        "🛑 <b>Admin tomonidan o'yin majburiy to'xtatildi.</b>",
+        { parse_mode: "HTML" }
+      );
+    }
+
+    // --- B) AGAR ODDIY USER BO'LSA (OVOZ BERISH BOSHLANADI) ---
+
+    // Agar ovoz berish allaqachon ketayotgan bo'lsa
+    if (game.stopVoteActive) {
+      return ctx.reply(
+        "⚠️ O'yinni to'xtatish bo'yicha ovoz berish jarayoni ketmoqda! Tepada ovoz bering."
+      );
+    }
+
+    // O'yinchilar sonini tekshiramiz
+    const playerCount = game.players.size;
+    if (playerCount === 0) {
+      // O'yinchi yo'q bo'lsa, shunchaki to'xtatvoramiz
+      if (game.timer) clearTimeout(game.timer);
+      groupGames.delete(ctx.chat.id);
+      return ctx.reply("🛑 O'yin to'xtatildi.");
+    }
+
+    // Ovoz berishni boshlaymiz
+    game.stopVoteActive = true;
+    game.stopVotes = new Set(); // Ovoz berganlar ro'yxati
+    // Kerakli ovozlar soni (50% dan ko'p bo'lishi kerak)
+    // Masalan: 10 kishi bo'lsa -> 6 ta ovoz kerak. 3 kishi bo'lsa -> 2 ta.
+    game.votesNeeded = Math.floor(playerCount / 2) + 1;
+
+    // Ovoz berish tugmasini chiqaramiz
+    await ctx.reply(
+      `🛑 <b>O'yinni to'xtatish taklif qilindi!</b>\n\n` +
+        `Agar <b>${game.votesNeeded}</b> kishi rozi bo'lsa, o'yin to'xtatiladi.\n` +
+        `Hozirgi ovozlar: <b>0 / ${game.votesNeeded}</b>`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              `✋ Ha, to'xtatilsin (0/${game.votesNeeded})`,
+              "vote_stop_game"
+            ),
+          ],
+        ]),
+      }
+    );
   }
 });
 
@@ -1189,9 +1321,65 @@ async function initSoloQuizSession(ctx, quizId) {
   }
 }
 
-bot.action(/^start_solo_(.+)$/, ctx => {
-  ctx.answerCbQuery();
-  initSoloQuizSession(ctx, ctx.match[1]);
+// ===================================================
+// YAKKAXON O'YINNI BOSHLASH (TEKSHIRUV BILAN)
+// ===================================================
+
+bot.action(/^start_solo_(.+)$/, async ctx => {
+  const newQuizId = ctx.match[1];
+  const userId = ctx.from.id;
+
+  // 1. Agar user allaqachon boshqa test ishlayotgan bo'lsa
+  if (activeGames.has(userId)) {
+    const currentGame = activeGames.get(userId);
+
+    // Agar aynan shu testni o'zini qayta boshlamoqchi bo'lsa (Restart)
+    if (currentGame.quizId.toString() === newQuizId) {
+      // Davom ettirishga ruxsat beramiz yoki restart qilamiz (pastdagi mantiqqa o'tadi)
+      // Lekin odatda restart_solo_ alohida ishlaydi.
+    }
+
+    return ctx.reply(
+      `⚠️ <b>Sizda yakunlanmagan test bor!</b>\n\n` +
+        `Eski testni to'xtatib, yangisini boshlashni xohlaysizmi?`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "✅ Ha, yangisini boshlash",
+              `force_start_solo_${newQuizId}`
+            ),
+          ],
+          [Markup.button.callback("🚫 Yo'q, davom ettirish", "delete_msg")],
+        ]),
+      }
+    );
+  }
+
+  // 2. Agar bo'sh bo'lsa, odatiy boshlash
+  await ctx.answerCbQuery();
+  return initSoloQuizSession(ctx, newQuizId);
+});
+
+// --- YANGI: Majburiy boshlash (Eskisini o'chirib) ---
+bot.action(/^force_start_solo_(.+)$/, async ctx => {
+  const newQuizId = ctx.match[1];
+  const userId = ctx.from.id;
+
+  // 1. Eski o'yinni to'xtatamiz
+  if (activeGames.has(userId)) {
+    const game = activeGames.get(userId);
+    if (game.timer) clearTimeout(game.timer);
+    activeGames.delete(userId);
+  }
+
+  // 2. Xabarni yangilaymiz
+  await ctx.deleteMessage().catch(() => {});
+  await ctx.answerCbQuery("Eski test to'xtatildi.");
+
+  // 3. Yangisini boshlaymiz
+  return initSoloQuizSession(ctx, newQuizId);
 });
 
 async function sendSoloQuestion(userId) {
@@ -1555,4 +1743,73 @@ bot.action(/^edit_shuffle_(.+)$/, ctx => {
 bot.action(/^add_question_(.+)$/, ctx => {
   ctx.session.editQuizId = ctx.match[1];
   ctx.scene.enter("add_quiz_question");
+});
+
+// ===================================================
+// O'YINNI TO'XTATISH UCHUN OVOZ BERISH
+// ===================================================
+bot.action("vote_stop_game", async ctx => {
+  const chatId = ctx.chat.id;
+  const userId = ctx.from.id;
+  const game = groupGames.get(chatId);
+
+  // Agar o'yin tugab qolgan bo'lsa
+  if (!game || !game.stopVoteActive) {
+    return ctx.answerCbQuery("Ovoz berish yakunlangan yoki o'yin yo'q.");
+  }
+
+  // Faqat o'yindagi ishtirokchilar ovoz bera olsinmi?
+  // (Sizning talabingiz bo'yicha: "Test ishlaydigan userlar")
+  if (!game.players.has(userId)) {
+    return ctx.answerCbQuery(
+      "🚫 Siz o'yinda ishtirok etmayapsiz! Ovoz bera olmaysiz.",
+      { show_alert: true }
+    );
+  }
+
+  // Bir kishi bir marta ovoz beradi
+  if (game.stopVotes.has(userId)) {
+    return ctx.answerCbQuery("Siz allaqachon ovoz berdingiz!");
+  }
+
+  // Ovozni qabul qilamiz
+  game.stopVotes.add(userId);
+  const currentVotes = game.stopVotes.size;
+
+  // AGAR OVOZLAR YETARLI BO'LSA -> TO'XTATAMIZ
+  if (currentVotes >= game.votesNeeded) {
+    if (game.timer) clearTimeout(game.timer);
+    groupGames.delete(chatId);
+
+    await ctx.deleteMessage().catch(() => {});
+    return ctx.reply(
+      `🛑 <b>Ko'pchilik qarori bilan test to'xtatildi!</b>\n(${currentVotes} ta ovoz yig'ildi)`,
+      { parse_mode: "HTML" }
+    );
+  }
+
+  // AGAR HALI YETMASA -> XABARNI YANGILAYMIZ
+  try {
+    await ctx.editMessageText(
+      `🛑 <b>O'yinni to'xtatish taklif qilindi!</b>\n\n` +
+        `Agar <b>${game.votesNeeded}</b> kishi rozi bo'lsa, o'yin to'xtatiladi.\n` +
+        `Hozirgi ovozlar: <b>${currentVotes} / ${game.votesNeeded}</b>`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              `✋ Ha, to'xtatilsin (${currentVotes}/${game.votesNeeded})`,
+              "vote_stop_game"
+            ),
+          ],
+        ]),
+      }
+    );
+    await ctx.answerCbQuery(
+      `Ovoz qabul qilindi! (${currentVotes}/${game.votesNeeded})`
+    );
+  } catch (e) {
+    // Xabar o'zgarmasa xato bermasligi uchun
+  }
 });
