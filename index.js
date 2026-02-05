@@ -984,23 +984,33 @@ async function sendGroupQuestion(chatId, telegram) {
   const q = game.questions[game.currentQIndex];
   game.answeredUsers.clear();
 
+  // --- 🔥 YANGI QO'SHILADIGAN HIMOYA KODI 🔥 ---
+  // Agar savol matni yo'q bo'lsa yoki variantlardan biri bo'sh bo'lsa, o'tkazib yuboramiz
+  if (!q.question || q.options.some(opt => !opt || opt.trim() === "")) {
+    console.log(`⚠️ Buzuq savol o'tkazib yuborildi: "${q.question}"`);
+    game.currentQIndex++; // Keyingi savolga o'tamiz
+    return sendGroupQuestion(chatId, telegram); // Qayta chaqiramiz
+  }
+
   if (typeof q.correct_option_id !== "number") {
     game.currentQIndex++;
     return sendGroupQuestion(chatId, telegram);
   }
 
   try {
-    // --- O'ZGARISH: Raqam qo'shamiz (1. Savol...) ---
     const questionNum = game.currentQIndex + 1;
     const questionText = `${questionNum}. ${q.question}`;
-    // ------------------------------------------------
 
-    await telegram.sendQuiz(chatId, questionText, q.options, {
+    // O'ZGARISH: Yuborilgan xabarni "msg" ga saqlaymiz
+    const msg = await telegram.sendQuiz(chatId, questionText, q.options, {
       is_anonymous: false,
       correct_option_id: q.correct_option_id,
       explanation: q.explanation,
       open_period: game.time_limit,
     });
+
+    // MUHIM: Shu savolning ID sini saqlab qo'yamiz
+    game.currentPollId = msg.poll.id;
 
     if (game.timer) clearTimeout(game.timer);
     game.timer = setTimeout(
@@ -1194,23 +1204,37 @@ async function sendSoloQuestion(userId) {
 
   const q = game.questions[game.currentValues];
 
+  // --- 🔥 YANGI QO'SHILADIGAN HIMOYA KODI 🔥 ---
+  if (!q.question || q.options.some(opt => !opt || opt.trim() === "")) {
+    console.log(`⚠️ Buzuq savol o'tkazib yuborildi: "${q.question}"`);
+    game.currentValues++;
+    return sendSoloQuestion(userId);
+  }
+
   if (typeof q.correct_option_id !== "number") {
     game.currentValues++;
     return sendSoloQuestion(userId);
   }
 
   try {
-    // --- O'ZGARISH: Raqam qo'shamiz (1. Savol...) ---
     const questionNum = game.currentValues + 1;
     const questionText = `${questionNum}. ${q.question}`;
-    // ------------------------------------------------
 
-    await bot.telegram.sendQuiz(game.chatId, questionText, q.options, {
-      is_anonymous: false,
-      correct_option_id: q.correct_option_id,
-      explanation: q.explanation,
-      open_period: game.time_limit,
-    });
+    // O'ZGARISH: msg ga saqlaymiz
+    const msg = await bot.telegram.sendQuiz(
+      game.chatId,
+      questionText,
+      q.options,
+      {
+        is_anonymous: false,
+        correct_option_id: q.correct_option_id,
+        explanation: q.explanation,
+        open_period: game.time_limit,
+      }
+    );
+
+    // MUHIM: ID ni saqlaymiz
+    game.currentPollId = msg.poll.id;
 
     if (game.timer) clearTimeout(game.timer);
     game.timer = setTimeout(
@@ -1308,61 +1332,22 @@ async function finishSoloQuiz(userId) {
 }
 
 // ===================================================
-// 4. JAVOBLARNI QABUL QILISH (TUZATILDI)
+// 4. JAVOBLARNI QABUL QILISH (TUZATILDI: SOLO FIRST)
 // ===================================================
 
 bot.on("poll_answer", async ctx => {
   const userId = ctx.pollAnswer.user.id;
-  const userName = ctx.pollAnswer.user.first_name; // Ismini olamiz
+  const userName = ctx.pollAnswer.user.first_name;
   const answer = ctx.pollAnswer;
+  const pollId = ctx.pollAnswer.poll_id; // <--- JAVOB QAYSI SAVOLGA KELDI?
 
-  let groupGame = null;
-  let groupChatId = null;
-
-  // Guruh o'yinini qidiramiz
-  for (const [chatId, game] of groupGames.entries()) {
-    // 1-O'ZGARISH: "&& game.players.has(userId)" degan shartni OLIB TASHLADIK.
-    // Endi shunchaki o'yin ketayotgan bo'lsa bo'ldi.
-    if (game.status === "playing") {
-      groupGame = game;
-      groupChatId = chatId;
-      break;
-    }
-  }
-
-  if (groupGame) {
-    // 2-O'ZGARISH: Agar user ro'yxatda bo'lmasa, uni QO'SHIB QO'YAMIZ
-    if (!groupGame.players.has(userId)) {
-      groupGame.players.add(userId);
-      groupGame.scores.set(userId, 0);
-      groupGame.playerNames.set(userId, userName);
-    }
-
-    const currentQ = groupGame.questions[groupGame.currentQIndex];
-
-    // Agar bu savolga javob bergan bo'lsa, qayta hisoblamaymiz
-    if (groupGame.answeredUsers.has(userId)) return;
-    groupGame.answeredUsers.add(userId);
-
-    // Ball berish
-    if (currentQ && answer.option_ids[0] === currentQ.correct_option_id) {
-      const oldScore = groupGame.scores.get(userId) || 0;
-      groupGame.scores.set(userId, oldScore + 1);
-    }
-
-    // Agar HAMMA javob berib bo'lgan bo'lsa, tezroq keyingisiga o'tamiz
-    if (groupGame.answeredUsers.size === groupGame.players.size) {
-      if (groupGame.timer) clearTimeout(groupGame.timer);
-      setTimeout(() => {
-        forceNextGroupQuestion(groupChatId, ctx.telegram);
-      }, 1000);
-    }
-    return;
-  }
-
-  // --- Yakkaxon o'yin (o'zgarishsiz qoladi) ---
+  // ----------------------------------------------------
+  // 1. YAKKAXON (SOLO) O'YINNI TEKSHIRAMIZ
+  // ----------------------------------------------------
   const soloGame = activeGames.get(userId);
-  if (soloGame) {
+
+  // Faqat o'yin bor bo'lsa VA poll_id mos kelsa qabul qilamiz
+  if (soloGame && soloGame.currentPollId === pollId) {
     if (soloGame.timer) clearTimeout(soloGame.timer);
     soloGame.emptyCount = 0;
 
@@ -1370,11 +1355,58 @@ bot.on("poll_answer", async ctx => {
     if (currentQ && answer.option_ids[0] === currentQ.correct_option_id) {
       soloGame.score++;
     }
+
     soloGame.currentValues++;
     activeGames.set(userId, soloGame);
+
     setTimeout(() => {
       sendSoloQuestion(userId);
     }, 500);
+
+    return; // <--- Solo o'yin edi, tamom.
+  }
+
+  // ----------------------------------------------------
+  // 2. GURUH O'YININI TEKSHIRAMIZ
+  // ----------------------------------------------------
+
+  // Biz endi hamma guruhlarni aylanib, ID si to'g'ri kelganini topamiz
+  let groupGame = null;
+  let groupChatId = null;
+
+  for (const [chatId, game] of groupGames.entries()) {
+    // Faqat POLL ID si mos kelgan o'yinni qidiramiz
+    if (game.status === "playing" && game.currentPollId === pollId) {
+      groupGame = game;
+      groupChatId = chatId;
+      break; // Topdik!
+    }
+  }
+
+  if (groupGame) {
+    // Userni ro'yxatga qo'shamiz (Agar avval kirmagan bo'lsa)
+    if (!groupGame.players.has(userId)) {
+      groupGame.players.add(userId);
+      groupGame.scores.set(userId, 0);
+      groupGame.playerNames.set(userId, userName);
+    }
+
+    if (groupGame.answeredUsers.has(userId)) return;
+    groupGame.answeredUsers.add(userId);
+
+    const currentQ = groupGame.questions[groupGame.currentQIndex];
+
+    if (currentQ && answer.option_ids[0] === currentQ.correct_option_id) {
+      const oldScore = groupGame.scores.get(userId) || 0;
+      groupGame.scores.set(userId, oldScore + 1);
+    }
+
+    if (groupGame.answeredUsers.size === groupGame.players.size) {
+      if (groupGame.timer) clearTimeout(groupGame.timer);
+      setTimeout(() => {
+        forceNextGroupQuestion(groupChatId, ctx.telegram);
+      }, 1000);
+    }
   }
 });
 
