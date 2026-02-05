@@ -785,18 +785,29 @@ bot.hears(/^\/view_(.+)$/, async ctx => {
 });
 
 // ===================================================
-// 🔄 CHATDA QAYTA O'YNASH LOGIKASI
+// 🔄 YAKKAXON QAYTA O'YNASH (HIMOYA BILAN)
 // ===================================================
 
 bot.action(/^restart_solo_(.+)$/, async ctx => {
-  const quizId = ctx.match[1]; // ID ni olamiz
+  const quizId = ctx.match[1];
+  const userId = ctx.from.id;
+
+  // --- 🔥 HIMOYA KODI 🔥 ---
+  // Agar foydalanuvchi allaqachon test ishlayotgan bo'lsa,
+  // tugmani bosishiga yo'l qo'ymaymiz.
+  if (activeGames.has(userId)) {
+    return ctx.answerCbQuery(
+      "⚠️ Siz allaqachon test ishlayapsiz! Avval uni tugating.",
+      { show_alert: true }
+    );
+  }
+  // -------------------------
 
   await ctx.answerCbQuery("Test qayta yuklanmoqda... 🔄");
 
-  // Eski natija xabarini o'chirib tashlaymiz (ekran toza turishi uchun)
-  await ctx.deleteMessage().catch(() => {});
+  // Xabarni o'chirmaymiz (Sizning talabingiz bo'yicha)
+  // await ctx.deleteMessage().catch(() => {});
 
-  // Testni boshidan boshlaymiz
   return initSoloQuizSession(ctx, quizId);
 });
 
@@ -822,10 +833,7 @@ bot.action(/^restart_group_(.+)$/, async ctx => {
 
   await ctx.answerCbQuery("Lobbi qayta ochilmoqda...");
 
-  // 2. Eski natija xabarini o'chirib tashlaymiz (chat toza turishi uchun)
-  await ctx.deleteMessage().catch(() => {});
-
-  // 3. Yangi lobbi ochamiz
+  // 2. Yangi lobbi ochamiz
   return initGroupLobby(ctx, quizId);
 });
 
@@ -1065,7 +1073,11 @@ bot.action("join_game", async ctx => {
 
   game.players.add(userId);
   game.scores.set(userId, 0);
-  game.playerNames.set(userId, ctx.from.first_name);
+
+  const displayName = ctx.from.username
+    ? `@${ctx.from.username}`
+    : ctx.from.first_name;
+  game.playerNames.set(userId, displayName);
 
   const namesList = Array.from(game.playerNames.values())
     .map(name => `• ${name}`)
@@ -1525,9 +1537,13 @@ async function finishSoloQuiz(userId) {
 
 bot.on("poll_answer", async ctx => {
   const userId = ctx.pollAnswer.user.id;
-  const userName = ctx.pollAnswer.user.first_name;
+  const userObj = ctx.pollAnswer.user;
   const answer = ctx.pollAnswer;
   const pollId = ctx.pollAnswer.poll_id; // <--- JAVOB QAYSI SAVOLGA KELDI?
+
+  const displayName = userObj.username
+    ? `@${userObj.username}`
+    : userObj.first_name;
 
   // ----------------------------------------------------
   // 1. YAKKAXON (SOLO) O'YINNI TEKSHIRAMIZ
@@ -1576,7 +1592,7 @@ bot.on("poll_answer", async ctx => {
     if (!groupGame.players.has(userId)) {
       groupGame.players.add(userId);
       groupGame.scores.set(userId, 0);
-      groupGame.playerNames.set(userId, userName);
+      groupGame.playerNames.set(userId, displayName);
     }
 
     if (groupGame.answeredUsers.has(userId)) return;
