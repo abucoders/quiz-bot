@@ -404,6 +404,10 @@ bot.command("stop", async ctx => {
 // 🔍 INLINE MODE (YANGILANGAN - 100% ISHLAYDI)
 // ===================================================
 
+// ===================================================
+// 🔍 INLINE MODE (YANGILANGAN - 2 XIL VARIANT BILAN)
+// ===================================================
+
 bot.on("inline_query", async ctx => {
   const query = ctx.inlineQuery.query;
   let quizzes = [];
@@ -425,20 +429,50 @@ bot.on("inline_query", async ctx => {
       quizzes = await Quiz.find().sort({ createdAt: -1 }).limit(20);
     }
 
-    const results = quizzes.map(q => ({
-      type: "article",
-      id: q._id.toString(),
-      title: q.title,
-      description: `${q.questions.length} ta savol | ⏱ ${q.settings.time_limit} soniya`,
-      thumb_url: "https://cdn-icons-png.flaticon.com/512/3407/3407024.png",
-      input_message_content: {
-        // --- ENG MUHIM JOYI SHU YERDA ---
-        // Test tanlanganda srazi buyruq yuboriladi.
-        // Bu buyruq orqali bot guruh ID sini aniqlay oladi.
-        message_text: `/start_lobby_${q._id}`,
-      },
-      // reply_markup (tugmalar) kerak emas, chunki buyruq ishga tushadi
-    }));
+    const results = [];
+
+    quizzes.forEach(q => {
+      // 1-VARIANT: ULASHISH UCHUN (Chiroyli kartochka)
+      // Bu variantni do'stingizga yuborsangiz chiroyli ko'rinadi
+      results.push({
+        type: "article",
+        id: q._id.toString() + "_share", // ID unikal bo'lishi kerak
+        title: `📤 Ulashish: ${q.title}`,
+        description: `${q.questions.length} savol • Do'stga yuborish uchun`,
+        thumb_url: "https://cdn-icons-png.flaticon.com/512/2958/2958791.png", // Share icon
+        input_message_content: {
+          message_text:
+            `📄 <b>${q.title}</b>\n` +
+            `🖊 Savollar: ${q.questions.length} ta\n` +
+            `⏱ Vaqt: ${q.settings.time_limit} soniya\n\n` +
+            `👇 Testni ishlash uchun bosing:`,
+          parse_mode: "HTML",
+        },
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "🚀 Testni boshlash",
+                url: `https://t.me/${ctx.botInfo.username}?start=${q._id}`,
+              },
+            ],
+          ],
+        },
+      });
+
+      // 2-VARIANT: GURUHDA BOSHLASH (Buyruq)
+      // Bu variantni guruhga yuborsangiz, srazi o'yin ochiladi
+      results.push({
+        type: "article",
+        id: q._id.toString() + "_group",
+        title: `📢 Guruhda boshlash: ${q.title}`,
+        description: "Guruhga yuborilsa, srazi Lobbi ochiladi",
+        thumb_url: "https://cdn-icons-png.flaticon.com/512/3407/3407024.png", // Megaphone icon
+        input_message_content: {
+          message_text: `/start_lobby_${q._id}`,
+        },
+      });
+    });
 
     await ctx.answerInlineQuery(results, { cache_time: 0 });
   } catch (err) {
@@ -1838,22 +1872,49 @@ bot.action("vote_stop_game", async ctx => {
 });
 
 // ===================================================
-// GURUHDA TESTNI SRAZI OCHISH (COMMAND HANDLER)
+// GURUHDA TESTNI SRAZI OCHISH (LICHKA UCHUN HAM MOSLANDI)
 // ===================================================
 bot.hears(/^\/start_lobby_(.+)$/, async ctx => {
   const quizId = ctx.match[1];
 
-  // 1. Faqat guruhlarda ishlashi kerak
+  // 1. AGAR LICHKADA BO'LSA -> TESTNI KO'RISH MENYUSINI CHIQARAMIZ
+  // (Do'stingiz sizga shu kodni yuborsa, ustiga bossangiz shu yerga tushasiz)
   if (ctx.chat.type === "private") {
-    return ctx.reply(
-      "🚫 Bu funksiya faqat guruhlarda ishlaydi. Guruhga kiring va @botname deb yozing."
-    );
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz) return ctx.reply("❌ Test topilmadi.");
+
+    const botUser = ctx.botInfo.username;
+    const privateLink = `https://t.me/${botUser}?start=${quiz._id}`;
+    const groupLink = `https://t.me/${botUser}?startgroup=${quiz._id}`;
+
+    let statsText = `<b>${quiz.title}</b>\n`;
+    if (quiz.description) statsText += `<i>${quiz.description}</i>\n`;
+    statsText += `\n🖊 ${quiz.questions.length} ta savol\n`;
+    statsText += `⏱ ${quiz.settings.time_limit} soniya\n\n`;
+    statsText += `🔗 <b>Ulashish havolasi:</b>\n${privateLink}`;
+
+    return ctx.reply(statsText, {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback(
+            "▶️ Yakkaxon boshlash",
+            `start_solo_${quiz._id}`
+          ),
+        ],
+        [Markup.button.url("👥 Guruhda boshlash", groupLink)],
+        [
+          Markup.button.callback(
+            "📝 Testni tahrirlash",
+            `edit_main_${quiz._id}`
+          ),
+        ],
+        [Markup.button.callback("📊 Statistika", `stats_${quiz._id}`)],
+      ]),
+    });
   }
 
-  // 2. Buyruqni o'chirib tashlaymiz (Chatni toza saqlash uchun)
+  // 2. AGAR GURUHDA BO'LSA -> SRAZI LOBBI OCHAMIZ
   await ctx.deleteMessage().catch(() => {});
-
-  // 3. Lobbi ochamiz
-  // Bu funksiya ctx.chat.id ni bemalol o'qiy oladi, chunki bu oddiy xabar
   return initGroupLobby(ctx, quizId);
 });
