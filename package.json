@@ -4,8 +4,11 @@
     "axios": "^1.13.4",
     "dotenv": "^17.2.3",
     "index.js": "^0.0.3",
+    "mammoth": "^1.11.0",
     "mongoose": "^9.1.5",
     "node": "^25.5.0",
-    "telegraf": "^4.16.3"
+    "pdf-parse": "^2.4.5",
+    "telegraf": "^4.16.3",
+    "xlsx": "^0.18.5"
   }
 }

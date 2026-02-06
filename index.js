@@ -16,8 +16,11 @@ const {
   addQuestionScene,
 } = require("./scenes/editQuizScenes");
 const aiQuizScene = require("./scenes/aiQuizScene");
+const fileImportScene = require("./scenes/fileImportScene");
 
 const PORT = process.env.PORT || 3000;
+
+const ADMIN_USERNAME = "abdulloyev";
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
@@ -48,6 +51,7 @@ const stage = new Scenes.Stage([
   editShuffleScene,
   addQuestionScene,
   aiQuizScene,
+  fileImportScene,
 ]);
 
 bot.use(session());
@@ -94,8 +98,8 @@ bot.use(async (ctx, next) => {
             {
               parse_mode: "HTML",
               ...Markup.keyboard([
-                ["Yangi test tuzish", "📥 Matn orqali yuklash"],
-                ["Testlarimni ko'rish", "👤 Mening profilim"],
+                ["➕ Yangi test tuzish", "📥 Matn orqali yuklash"],
+                ["📚 Testlarimni ko'rish", "👤 Mening profilim"],
               ]).resize(),
             }
           );
@@ -612,9 +616,11 @@ bot.start(async ctx => {
         {
           parse_mode: "HTML",
           ...Markup.keyboard([
-            ["Yangi test tuzish", "📥 Matn orqali yuklash"],
-            ["Testlarimni ko'rish", "👤 Mening profilim"],
+            ["➕ Yangi test tuzish", "📥 Matn orqali - Free"],
+            ["📚 Testlarimni ko'rish", "💰 Balans / Coin olish"],
+            ["👤 Mening profilim"],
             ["📸 Rasm orqali test (AI) - NEW"],
+            ["📂 Fayl yuklash (Doc/Excel) - NEW"],
           ]).resize(),
         }
       );
@@ -627,8 +633,120 @@ bot.start(async ctx => {
 });
 
 // --- MENYU HANDLERS ---
-bot.hears("Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
+bot.hears("➕ Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
 bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz"));
+
+// ===================================================
+// 📂 FAYL YUKLASH (TUSHUNTIRISH VA TO'LOV - 500 COIN)
+// ===================================================
+bot.hears("📂 Fayl yuklash (Doc/Excel) - NEW", async ctx => {
+  const userId = ctx.from.id;
+  const COST = 500; // Narx
+
+  try {
+    let user = await User.findOne({ telegramId: userId });
+    if (!user) {
+      user = new User({ telegramId: userId, firstName: ctx.from.first_name });
+      await user.save();
+    }
+
+    // --- 1. COIN YETARLILIGINI TEKSHIRISH ---
+    if (user.coins < COST) {
+      const botUsername = ctx.botInfo.username;
+      const refLink = `https://t.me/${botUsername}?start=ref_${userId}`;
+      const shareText =
+        "Do'stim, bu botda butun kitobni tashlasang, o'zi test qilib bo'lib berar ekan! Daxshat! 🔥";
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(shareText)}`;
+
+      return ctx.reply(
+        `🚫 <b>Mablag' yetarli emas!</b>\n\n` +
+          `Bu "Super Funksiya"ning narxi: <b>${COST} Coin</b>\n` +
+          `Sizda bor: <b>${user.coins} Coin</b>\n\n` +
+          `👇 <b>Hisobni to'ldirish uchun do'stlarni taklif qiling:</b>`,
+        {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.url(
+                "🚀 Do'stlarni taklif qilish (+100 Coin)",
+                shareUrl
+              ),
+            ],
+          ]),
+        }
+      );
+    }
+
+    // --- 2. TUSHUNTIRISH VA TASDIQLASH SO'ROVI ---
+    await ctx.reply(
+      `📂 <b>KATTA FAYLLARNI YUKLASH (PREMIUM)</b>\n\n` +
+        `Bu funksiya sizga butun boshli sborniklar yoki kitoblarni (.xlsx, .docx, .pdf) yuklash imkonini beradi.\n\n` +
+        `🤖 <b>Bot nima qiladi?</b>\n` +
+        `1. Fayl ichidagi barcha testlarni o'qiydi (AI yordamida).\n` +
+        `2. Agar faylda masalan <b>150 ta</b> savol bo'lsa, ularni avtomatik ravishda <b>50 tadan</b> qilib, 3 ta alohida testga bo'lib beradi.\n\n` +
+        `💸 <b>Xizmat narxi: ${COST} Coin</b>\n` +
+        `Sizning balansingiz: ${user.coins} Coin\n\n` +
+        `Davom ettirib, hisobdan <b>${COST} Coin</b> yechilishiga rozimisiz?`,
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "✅ Ha, roziman (500 Coin)",
+              "confirm_file_pay"
+            ),
+          ],
+          [Markup.button.callback("❌ Yo'q, bekor qilish", "cancel_file_pay")],
+        ]),
+      }
+    );
+  } catch (err) {
+    console.error("File Entry Error:", err);
+  }
+});
+
+// ===================================================
+// 💸 FAYL TO'LOVINI TASDIQLASH HANDLERI
+// ===================================================
+bot.action("confirm_file_pay", async ctx => {
+  const userId = ctx.from.id;
+  const COST = 500;
+
+  try {
+    const user = await User.findOne({ telegramId: userId });
+
+    // Qayta tekshiramiz
+    if (!user || user.coins < COST) {
+      return ctx.answerCbQuery("❌ Mablag' yetarli emas!", {
+        show_alert: true,
+      });
+    }
+
+    // 1. Pulni yechamiz
+    await User.findOneAndUpdate(
+      { telegramId: userId },
+      { $inc: { coins: -COST } }
+    );
+
+    // 2. Xabarni o'zgartiramiz
+    await ctx.deleteMessage().catch(() => {});
+    await ctx.reply(
+      `✅ <b>-${COST} Coin yechildi.</b>\nFayl yuklash rejimi ochilmoqda...`,
+      { parse_mode: "HTML" }
+    );
+
+    // 3. Sahnaga kirgizamiz
+    return ctx.scene.enter("file_import_scene");
+  } catch (err) {
+    console.error("File Pay Confirm Error:", err);
+  }
+});
+
+// BEKOR QILISH HANDLERI
+bot.action("cancel_file_pay", async ctx => {
+  await ctx.deleteMessage().catch(() => {});
+  await ctx.reply("❌ Jarayon bekor qilindi. Pulingiz o'z joyida.");
+});
 
 // ===================================================
 // 📸 AI TEST (PULLIK KIRISH - 130 COIN)
@@ -860,7 +978,7 @@ async function showUserQuizzes(ctx, page = 1) {
 }
 
 // 1. Menyudan bosilganda (1-sahifa)
-bot.hears("Testlarimni ko'rish", ctx => showUserQuizzes(ctx, 1));
+bot.hears("📚 Testlarimni ko'rish", ctx => showUserQuizzes(ctx, 1));
 
 // 2. Tugma bosilganda (Keyingi sahifalar)
 bot.action(/^my_quizzes_page_(.+)$/, async ctx => {
@@ -2074,4 +2192,109 @@ bot.hears(/^\/start_lobby_(.+)$/, async ctx => {
   // 2. AGAR GURUHDA BO'LSA -> SRAZI LOBBI OCHAMIZ
   await ctx.deleteMessage().catch(() => {});
   return initGroupLobby(ctx, quizId);
+});
+
+// ===================================================
+// 💰 BALANS VA DO'KON (ADMINGA YOZISH)
+// ===================================================
+bot.hears("💰 Balans / Coin olish", async ctx => {
+  const userId = ctx.from.id;
+
+  try {
+    let user = await User.findOne({ telegramId: userId });
+    if (!user) user = { coins: 0 }; // Ehtiyot shart
+
+    // Narxlar ro'yxati (O'zingiz xohlagan narxni qo'ying)
+    const prices = [
+      { coins: 1000, price: "5,000 so'm" },
+      { coins: 3000, price: "12,000 so'm" },
+      { coins: 5000, price: "18,000 so'm" },
+      { coins: 10000, price: "30,000 so'm" },
+    ];
+
+    let msg = `💰 <b>SIZNING BALANSINGIZ:</b>\n`;
+    msg += `🪙 <b>${user.coins} Coin</b>\n\n`;
+
+    msg += `🛒 <b>COIN DO'KONI:</b>\n`;
+    msg += `Coinlar orqali siz <b>AI Test</b> va <b>Katta fayllarni yuklash</b> xizmatlaridan foydalanishingiz mumkin.\n\n`;
+    msg += `<i>Sotib olish uchun kerakli paketni tanlang:</i> 👇`;
+
+    // Tugmalarni yasaymiz
+    const buttons = prices.map(p => {
+      // Admin lichkasiga o'tadigan tayyor link yasaymiz
+      // Format: https://t.me/USERNAME?text=TayyorMatn
+      const text = `Salom Admin! Mening ID raqamim: ${userId}. Men ${p.coins} Coin (${p.price}) sotib olmoqchiman.`;
+      const url = `https://t.me/${ADMIN_USERNAME}?text=${encodeURIComponent(text)}`;
+
+      return [Markup.button.url(`💎 ${p.coins} Coin - ${p.price}`, url)];
+    });
+
+    // Pastga "Qo'llanma" tugmasini ham qo'shib qo'yamiz
+    buttons.push([
+      Markup.button.callback("ℹ️ Coin nima uchun kerak?", "coin_info"),
+    ]);
+
+    await ctx.reply(msg, {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard(buttons),
+    });
+  } catch (err) {
+    console.error("Balance Error:", err);
+  }
+});
+
+// Coin haqida ma'lumot
+bot.action("coin_info", async ctx => {
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    "💡 <b>Coin nima uchun kerak?</b>\n\n" +
+      "1. 📸 <b>AI Test:</b> Rasm orqali test tuzish (100 Coin)\n" +
+      "2. 📂 <b>Fayl Yuklash:</b> Kitoblarni testga aylantirish (500 Coin)\n" +
+      "3. ⚔️ <b>Duel:</b> Do'stlar bilan garov o'ynash (Tez kunda...)\n\n" +
+      "<i>Coin yig'ish uchun do'stlaringizni taklif qiling yoki sotib oling!</i>",
+    { parse_mode: "HTML" }
+  );
+});
+
+// ===================================================
+// 👮‍♂️ ADMIN BUYRUG'I: COIN BERISH
+// Foydalanish: /addcoin ID SUMMA
+// Masalan: /addcoin 12345678 1000
+// ===================================================
+bot.hears(/^\/addcoin (\d+) (\d+)$/, async ctx => {
+  // 1. Faqat ADMIN ishlata olsin
+  if (ctx.from.id.toString() !== process.env.ADMIN_ID) {
+    return ctx.reply("Bu buyruq faqat admin uchun!");
+  }
+
+  const targetId = ctx.match[1]; // User ID
+  const amount = parseInt(ctx.match[2]); // Summa
+
+  try {
+    const user = await User.findOne({ telegramId: targetId });
+
+    if (!user) {
+      return ctx.reply("❌ Bunday foydalanuvchi topilmadi.");
+    }
+
+    // Coin qo'shamiz
+    user.coins += amount;
+    await user.save();
+
+    await ctx.reply(
+      `✅ <b>Bajarildi!</b>\nUser: ${user.firstName}\nQo'shildi: ${amount} Coin\nHozirgi balans: ${user.coins}`,
+      { parse_mode: "HTML" }
+    );
+
+    // Userga ham xabar boradi
+    await ctx.telegram.sendMessage(
+      targetId,
+      `🥳 <b>Hisobingiz to'ldirildi!</b>\n\n` +
+        `Admin tomonidan sizga <b>${amount} Coin</b> qo'shildi.\n` +
+        `Hozirgi balansingiz: <b>${user.coins} Coin</b>`,
+      { parse_mode: "HTML" }
+    );
+  } catch (err) {
+    ctx.reply("Xatolik bo'ldi.");
+  }
 });
