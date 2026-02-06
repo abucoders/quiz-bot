@@ -3,8 +3,44 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Quiz = require("../models/Quiz");
 const axios = require("axios");
 
-// Gemini ni sozlaymiz
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// ============================================================
+// 🔑 API KALITLAR VA STATISTIKA
+// ============================================================
+
+// Kalitlarni shu yerga qo'ying
+const rawKeys = [
+  process.env.GEMINI_API_KEY, // 1-kalit
+  "AIzaSyDIY3WHQ2uIoBqmEM8-B27wh91vm9X1vAU",
+  "AIzaSyAC94f3ClYS7uKof_hXOiPCvuoU10cSL5s",
+  "AIzaSyCSziIMTIchFzoVWBuf8XDbvmOjZyr1Aj0",
+];
+
+// Kalitlarni obyektga aylantiramiz (Statistika uchun)
+// usage: muvaffaqiyatli ishlatildi
+// errors: xato berdi (masalan limit tugadi)
+const apiStats = rawKeys
+  .filter(k => k && k.length > 10)
+  .map(key => ({
+    key: key,
+    usage: 0,
+    errors: 0,
+    lastUsed: null,
+  }));
+
+// Tasodifiy kalit tanlash va hisoblagichni oshirish
+function getGenAIInstance() {
+  if (apiStats.length === 0) throw new Error("API Kalitlar yo'q");
+
+  // Tasodifiy bitta kalitni olamiz
+  const randomIndex = Math.floor(Math.random() * apiStats.length);
+  const selectedKeyObj = apiStats[randomIndex];
+
+  // Qaysi kalit tanlanganini qaytaramiz (index bilan, keyin statistika yozish uchun)
+  return {
+    genAI: new GoogleGenerativeAI(selectedKeyObj.key),
+    index: randomIndex,
+  };
+}
 
 const aiQuizScene = new Scenes.WizardScene(
   "ai_quiz_scene",
@@ -13,7 +49,6 @@ const aiQuizScene = new Scenes.WizardScene(
   // 1-QADAM: BOSHLASH VA RASM SO'RASH
   // ============================================================
   async ctx => {
-    // Savollar to'planadigan umumiy "savat"ni ochamiz
     ctx.wizard.state.allQuestions = [];
 
     await ctx.reply(
@@ -30,25 +65,41 @@ const aiQuizScene = new Scenes.WizardScene(
   },
 
   // ============================================================
-  // 2-QADAM: RASMLARNI QABUL QILISH (SIKL)
+  // 2-QADAM: RASMLARNI QABUL QILISH
   // ============================================================
   async ctx => {
     const text = ctx.message?.text;
 
-    // 1. BEKOR QILISH
+    // --- 🕵️‍♂️ ADMIN STATISTIKANI KO'RISHI UCHUN ---
+    if (text === "/apistats") {
+      // Admin ekanligini tekshiramiz
+      if (ctx.from.id.toString() !== process.env.ADMIN_ID) {
+        return ctx.reply("Bu ma'lumot faqat admin uchun!");
+      }
+
+      let msg = "📊 <b>API KALITLAR STATISTIKASI:</b>\n\n";
+      apiStats.forEach((stat, i) => {
+        // Kalitni yashirib ko'rsatamiz (oxirgi 4 ta harf)
+        const maskedKey = "..." + stat.key.slice(-4);
+        msg += `🔑 <b>Kalit ${i + 1}</b> (${maskedKey})\n`;
+        msg += `✅ Ishladi: <b>${stat.usage}</b> marta\n`;
+        msg += `❌ Xatolar: <b>${stat.errors}</b> ta\n\n`;
+      });
+
+      return ctx.reply(msg, { parse_mode: "HTML" });
+    }
+    // ---------------------------------------------
+
     if (text === "🚫 Bekor qilish") {
       await ctx.reply("❌ Jarayon bekor qilindi.", Markup.removeKeyboard());
       return ctx.scene.leave();
     }
 
-    // 2. TUGATISH (Agar rasm tashlab bo'lgan bo'lsa)
     if (text === "✅ Tugatish") {
       if (ctx.wizard.state.allQuestions.length === 0) {
         await ctx.reply("⚠️ Hali birorta ham savol topilmadi. Rasm yuboring!");
-        return; // Qadamda qolamiz
+        return;
       }
-
-      // Keyingi qadamga o'tamiz (Nom qo'yishga)
       await ctx.reply(
         `✅ <b>Rasmlar qabul qilindi!</b>\n` +
           `Jami yig'ilgan savollar: <b>${ctx.wizard.state.allQuestions.length} ta</b>.\n\n` +
@@ -58,12 +109,13 @@ const aiQuizScene = new Scenes.WizardScene(
       return ctx.wizard.next();
     }
 
-    // 3. RASM KELGANDA ISHLASH
     if (ctx.message?.photo) {
       const processingMsg = await ctx.reply("⏳ Rasm tahlil qilinmoqda...");
 
+      // Stat uchun indeksni saqlab turamiz
+      let currentKeyIndex = -1;
+
       try {
-        // --- A) Rasmni yuklab olish ---
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
         const imageResponse = await axios.get(fileLink.href, {
@@ -71,8 +123,10 @@ const aiQuizScene = new Scenes.WizardScene(
         });
         const imageBuffer = Buffer.from(imageResponse.data).toString("base64");
 
-        // --- B) Gemini ga yuborish ---
-        // Eslatma: Model nomini to'g'ri yozamiz
+        // --- YANGI API LOGIKASI ---
+        const { genAI, index } = getGenAIInstance();
+        currentKeyIndex = index; // Qaysi kalit ishlatilganini eslab qolamiz
+
         const model = genAI.getGenerativeModel({
           model: "gemini-3-flash-preview",
         });
@@ -101,22 +155,22 @@ const aiQuizScene = new Scenes.WizardScene(
 
         const response = await result.response;
         let resultText = response.text();
-
-        // JSON tozalash
         resultText = resultText
           .replace(/```json/g, "")
           .replace(/```/g, "")
           .trim();
         const newQuestions = JSON.parse(resultText);
 
-        if (!Array.isArray(newQuestions) || newQuestions.length === 0) {
-          throw new Error("Savol topilmadi");
+        if (!Array.isArray(newQuestions) || newQuestions.length === 0)
+          throw new Error("Savol yo'q");
+
+        // ✅ MUVAFFAQIYATLI -> Statistika +1
+        if (currentKeyIndex !== -1) {
+          apiStats[currentKeyIndex].usage += 1;
         }
 
-        // --- C) Savatlarga qo'shish ---
         ctx.wizard.state.allQuestions.push(...newQuestions);
 
-        // Xabarni yangilash
         await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
         await ctx.reply(
           `✅ <b>Ushbu rasmdan ${newQuestions.length} ta savol qo'shildi!</b>\n` +
@@ -126,7 +180,12 @@ const aiQuizScene = new Scenes.WizardScene(
         );
       } catch (error) {
         console.error("AI Error:", error);
-        // Xato bo'lsa, o'sha rasm haqida aytamiz
+
+        // ❌ XATO -> Statistika (Error) +1
+        if (currentKeyIndex !== -1) {
+          apiStats[currentKeyIndex].errors += 1;
+        }
+
         await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
         await ctx.reply(
           `❌ <b>Bu rasmni o'qiy olmadim!</b>\n` +
@@ -138,14 +197,10 @@ const aiQuizScene = new Scenes.WizardScene(
           }
         );
       }
-
-      // MUHIM: Biz next() qilmaymiz, chunki yana rasm kelishi mumkin.
-      // Shu qadamda qolamiz.
       return;
     }
 
-    // Agar matn yozsa va u buyruq bo'lmasa
-    await ctx.reply("Iltimos, rasm yuboring yoki '✅ Tugatish' ni bosing.");
+    await ctx.reply("Rasm yuboring yoki '✅ Tugatish' ni bosing.");
   },
 
   // ============================================================
@@ -155,12 +210,12 @@ const aiQuizScene = new Scenes.WizardScene(
     const title = ctx.message.text;
     const questions = ctx.wizard.state.allQuestions;
 
-    await ctx.reply("💾 Test saqlanmoqda...");
+    await ctx.reply("💾 Saqlanmoqda...");
 
     try {
       const newQuiz = new Quiz({
         title: title,
-        description: "AI yordamida yaratilgan (Rasm orqali)",
+        description: "AI yordamida yaratilgan",
         creatorId: ctx.from.id,
         questions: questions.map(q => ({
           question: q.question,
@@ -178,9 +233,7 @@ const aiQuizScene = new Scenes.WizardScene(
       await newQuiz.save();
 
       await ctx.reply(
-        `🎉 <b>Test tayyor!</b>\n\n` +
-          `📝 Nom: <b>${title}</b>\n` +
-          `🔢 Savollar: <b>${questions.length} ta</b>`,
+        `🎉 Test tayyor!\n\n Nom: ${title}\nSavollar: ${questions.length} ta \n\n Tuzgan ${title} nomli testni "Testlarimni ko'rish" tugmasi orqali ko'rishingiz mumkin.`,
         Markup.keyboard([
           ["Yangi test tuzish", "📥 Matn orqali yuklash"],
           ["Testlarimni ko'rish", "👤 Mening profilim"],
@@ -190,7 +243,6 @@ const aiQuizScene = new Scenes.WizardScene(
     } catch (err) {
       await ctx.reply("Xatolik yuz berdi. Qayta urinib ko'ring.");
     }
-
     return ctx.scene.leave();
   }
 );
