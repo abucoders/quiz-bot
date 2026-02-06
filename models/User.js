@@ -10,6 +10,7 @@ const userSchema = new mongoose.Schema({
   quizzesSolved: { type: Number, default: 0 },
   coins: { type: Number, default: 0 }, // Coinlar hisobi
   lastBonusDate: Date,
+  hasUsedFreeAI: { type: Boolean, default: false },
 });
 
 module.exports = mongoose.model("User", userSchema);

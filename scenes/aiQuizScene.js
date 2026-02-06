@@ -237,7 +237,7 @@ const aiQuizScene = new Scenes.WizardScene(
         Markup.keyboard([
           ["Yangi test tuzish", "📥 Matn orqali yuklash"],
           ["Testlarimni ko'rish", "👤 Mening profilim"],
-          ["📸 Rasm orqali test (AI)"],
+          ["📸 Rasm orqali test (AI) - NEW"],
         ]).resize()
       );
     } catch (err) {
