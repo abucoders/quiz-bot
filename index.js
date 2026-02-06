@@ -98,8 +98,11 @@ bot.use(async (ctx, next) => {
             {
               parse_mode: "HTML",
               ...Markup.keyboard([
-                ["➕ Yangi test tuzish", "📥 Matn orqali yuklash"],
-                ["📚 Testlarimni ko'rish", "👤 Mening profilim"],
+                ["➕ Yangi test tuzish", "📥 Matn orqali - Free"],
+                ["📚 Testlarimni ko'rish", "💰 Balans / Coin olish"],
+                ["🏆 Top Reyting", "👤 Mening profilim"],
+                ["📸 Rasm orqali test (AI) - NEW"],
+                ["📂 Fayl yuklash (Doc/Excel) - NEW"],
               ]).resize(),
             }
           );
@@ -255,69 +258,6 @@ bot.command("broadcast", ctx => {
   if (ctx.from.id.toString() !== process.env.ADMIN_ID) return;
 
   ctx.scene.enter("admin_broadcast");
-});
-
-// ===================================================
-// 💰 ADMIN: COIN BERISH VA OLISH (YANGILANGAN)
-// ===================================================
-bot.command("addcoin", async ctx => {
-  // 1. Faqat ADMIN ishlata olsin
-  if (ctx.from.id.toString() !== process.env.ADMIN_ID) return;
-
-  // 2. Buyruqni bo'laklarga ajratamiz
-  const args = ctx.message.text.split(" ");
-  const targetId = Number(args[1]); // ID
-  const amount = Number(args[2]); // Miqdor
-
-  // 3. Tekshiruv
-  if (!targetId || !amount) {
-    return ctx.reply(
-      "❌ <b>Xato format!</b>\n\nIshlatish: <code>/addcoin ID MIQDOR</code>\nMasalan: <code>/addcoin 123456789 100</code> (Berish)\nYoki: <code>/addcoin 123456789 -50</code> (Olish)",
-      { parse_mode: "HTML" }
-    );
-  }
-
-  try {
-    // 4. Userni topib, coin qo'shamiz
-    const user = await User.findOneAndUpdate(
-      { telegramId: targetId },
-      { $inc: { coins: amount } },
-      { new: true }
-    );
-
-    if (!user) {
-      return ctx.reply("❌ Bunday ID ga ega foydalanuvchi topilmadi.");
-    }
-
-    // 5. Adminga hisobot (har doim bir xil)
-    await ctx.reply(
-      `✅ <b>Muvaffaqiyatli bajarildi!</b>\n\n👤 User: ${user.firstName}\n🔄 O'zgarish: <b>${amount}</b> Coin\n💰 Jami: <b>${user.coins}</b> Coin`,
-      { parse_mode: "HTML" }
-    );
-
-    // 6. FOYDALANUVCHIGA XABAR (MANTIQNI AJRATAMIZ)
-    if (amount > 0) {
-      // --- A) AGAR QO'SHILGAN BO'LSA (SOVG'A) ---
-      await bot.telegram.sendMessage(
-        targetId,
-        `🎁 <b>TABRIKLAYMIZ!</b>\n\nAdmin tomonidan sizga <b>${amount} Coin</b> sovg'a qilindi! 🥳\n\n💰 Hozirgi balansingiz: <b>${user.coins} Coin</b>`,
-        { parse_mode: "HTML" }
-      );
-    } else {
-      // --- B) AGAR AYIRILGAN BO'LSA (JARIMA) ---
-      // Math.abs(-40) -> 40 ga aylantiradi (minusni olib tashlaydi)
-      const positiveAmount = Math.abs(amount);
-
-      await bot.telegram.sendMessage(
-        targetId,
-        `🚫 <b>JARIMA!</b>\n\nAdmin tomonidan hisobingizdan <b>${positiveAmount} Coin</b> olib tashlandi. 📉\n\n💰 Hozirgi balansingiz: <b>${user.coins} Coin</b>`,
-        { parse_mode: "HTML" }
-      );
-    }
-  } catch (err) {
-    console.error(err);
-    ctx.reply("Xatolik yuz berdi.");
-  }
 });
 
 // ===================================================
@@ -618,7 +558,7 @@ bot.start(async ctx => {
           ...Markup.keyboard([
             ["➕ Yangi test tuzish", "📥 Matn orqali - Free"],
             ["📚 Testlarimni ko'rish", "💰 Balans / Coin olish"],
-            ["👤 Mening profilim"],
+            ["🏆 Top Reyting", "👤 Mening profilim"],
             ["📸 Rasm orqali test (AI) - NEW"],
             ["📂 Fayl yuklash (Doc/Excel) - NEW"],
           ]).resize(),
@@ -635,6 +575,42 @@ bot.start(async ctx => {
 // --- MENYU HANDLERS ---
 bot.hears("➕ Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
 bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz"));
+
+// ===================================================
+// 🏆 TOP REYTING (TUZATILGAN VERSIYA)
+// ===================================================
+bot.hears("🏆 Top Reyting", async ctx => {
+  try {
+    // 1. Top 10 talikni olamiz
+    const topUsers = await User.find().sort({ totalScore: -1 }).limit(10);
+
+    let msg = "🏆 <b>TOP 10 BILIMDONLAR:</b>\n\n";
+    topUsers.forEach((u, i) => {
+      let medal =
+        i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+      const name = u.firstName ? u.firstName.replace(/</g, "&lt;") : "Noma'lum";
+      msg += `${medal} <b>${name}</b> — ${u.totalScore} ball\n`;
+    });
+
+    // --- 2. XATOLIK BO'LGAN JOY (TUZATILDI) ---
+    const userId = ctx.from.id;
+    const currentUser = await User.findOne({ telegramId: userId });
+    const myScore = currentUser ? currentUser.totalScore : 0;
+
+    // Sizdan ko'proq ball to'plaganlar sonini sanaymiz (+1 qo'shsak sizning o'rningiz chiqadi)
+    const myRank =
+      (await User.countDocuments({ totalScore: { $gt: myScore } })) + 1;
+    // ------------------------------------------
+
+    msg += `\n👤 <b>Sizning o'rningiz:</b> ${myRank}-o'rin`;
+    msg += `\n⭐️ <b>Sizning ballingiz:</b> ${myScore}`;
+
+    await ctx.reply(msg, { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("Reyting xatosi:", err);
+    ctx.reply("Reytingni yuklashda xatolik yuz berdi.");
+  }
+});
 
 // ===================================================
 // 📂 FAYL YUKLASH (TUSHUNTIRISH VA TO'LOV - 500 COIN)
@@ -2206,10 +2182,10 @@ bot.hears("💰 Balans / Coin olish", async ctx => {
 
     // Narxlar ro'yxati (O'zingiz xohlagan narxni qo'ying)
     const prices = [
-      { coins: 1000, price: "5,000 so'm" },
-      { coins: 3000, price: "12,000 so'm" },
-      { coins: 5000, price: "18,000 so'm" },
-      { coins: 10000, price: "30,000 so'm" },
+      { coins: 1000, price: "12,000 so'm" }, // Start
+      { coins: 3000, price: "30,000 so'm" }, // Chegirma bilan
+      { coins: 5000, price: "45,000 so'm" }, // Yaxshi taklif
+      { coins: 10000, price: "80,000 so'm" }, // Eng katta paket
     ];
 
     let msg = `💰 <b>SIZNING BALANSINGIZ:</b>\n`;
@@ -2221,10 +2197,20 @@ bot.hears("💰 Balans / Coin olish", async ctx => {
 
     // Tugmalarni yasaymiz
     const buttons = prices.map(p => {
-      // Admin lichkasiga o'tadigan tayyor link yasaymiz
-      // Format: https://t.me/USERNAME?text=TayyorMatn
-      const text = `Salom Admin! Mening ID raqamim: ${userId}. Men ${p.coins} Coin (${p.price}) sotib olmoqchiman.`;
-      const url = `https://t.me/${ADMIN_USERNAME}?text=${encodeURIComponent(text)}`;
+      // Admin lichkasiga boradigan xabar matni
+      // Emojilar va yangi qatorlar (\n) bilan chiroyli qilamiz
+      const messageText = `👋 Assalomu alaykum, Admin!
+
+Men hisobimni to'ldirmoqchiman:
+
+🆔 Mening ID: ${userId}
+💎 Paket: ${p.coins} Coin
+💸 To'lov summasi: ${p.price}
+
+💳 Iltimos, to'lov uchun karta raqamingizni yuboring.`;
+
+      // Matnni URL formatiga o'tkazamiz
+      const url = `https://t.me/${ADMIN_USERNAME}?text=${encodeURIComponent(messageText)}`;
 
       return [Markup.button.url(`💎 ${p.coins} Coin - ${p.price}`, url)];
     });
@@ -2261,40 +2247,63 @@ bot.action("coin_info", async ctx => {
 // Foydalanish: /addcoin ID SUMMA
 // Masalan: /addcoin 12345678 1000
 // ===================================================
-bot.hears(/^\/addcoin (\d+) (\d+)$/, async ctx => {
-  // 1. Faqat ADMIN ishlata olsin
-  if (ctx.from.id.toString() !== process.env.ADMIN_ID) {
-    return ctx.reply("Bu buyruq faqat admin uchun!");
+bot.hears(/^\/addcoin (-?\d+) (-?\d+)$/, async ctx => {
+  // 1. Admin tekshiruvi (Oddiy va samarali)
+  if (String(ctx.from.id) !== String(process.env.ADMIN_ID)) return;
+
+  // Regex orqali ID va Miqdorni olish
+  const targetId = ctx.match[1];
+  const amount = parseInt(ctx.match[2]);
+
+  // 0 miqdorini kiritishni oldini olish
+  if (amount === 0) {
+    return ctx.reply("❌ Miqdor 0 dan farqli bo'lishi kerak.");
   }
 
-  const targetId = ctx.match[1]; // User ID
-  const amount = parseInt(ctx.match[2]); // Summa
-
   try {
-    const user = await User.findOne({ telegramId: targetId });
+    // 2. Ma'lumotni yangilash ($inc atomik operatsiyasi orqali)
+    // Bu usul user.coins += amount dan ko'ra xavfsizroq (race condition oldini oladi)
+    const user = await User.findOneAndUpdate(
+      { telegramId: targetId },
+      { $inc: { coins: amount } },
+      { new: true } // Yangilangan ma'lumotni qaytarish
+    );
 
     if (!user) {
-      return ctx.reply("❌ Bunday foydalanuvchi topilmadi.");
+      return ctx.reply("❌ Foydalanuvchi bazadan topilmadi.");
     }
 
-    // Coin qo'shamiz
-    user.coins += amount;
-    await user.save();
-
+    // 3. Admin uchun hisobot
+    const statusEmoji = amount > 0 ? "➕" : "➖";
     await ctx.reply(
-      `✅ <b>Bajarildi!</b>\nUser: ${user.firstName}\nQo'shildi: ${amount} Coin\nHozirgi balans: ${user.coins}`,
+      `📊 <b>Operatsiya bajarildi</b>\n\n` +
+        `👤 Foydalanuvchi: ${user.firstName}\n` +
+        `🆔 ID: <code>${targetId}</code>\n` +
+        `${statusEmoji} O'zgarish: <b>${amount} Coin</b>\n` +
+        `💰 Yangi balans: <b>${user.coins} Coin</b>`,
       { parse_mode: "HTML" }
     );
 
-    // Userga ham xabar boradi
-    await ctx.telegram.sendMessage(
-      targetId,
-      `🥳 <b>Hisobingiz to'ldirildi!</b>\n\n` +
-        `Admin tomonidan sizga <b>${amount} Coin</b> qo'shildi.\n` +
-        `Hozirgi balansingiz: <b>${user.coins} Coin</b>`,
-      { parse_mode: "HTML" }
-    );
+    // 4. Foydalanuvchi uchun aqlli xabar mantiqi
+    let userMessage = "";
+    if (amount > 0) {
+      userMessage = `🎁 <b>Hisobingiz to'ldirildi!</b>\n\nAdmin sizga <b>${amount}</b> coin qo'shdi. Xursand bo'ling! ✨`;
+    } else {
+      userMessage = `⚠️ <b>Hisobingizdan mablag' yechildi!</b>\n\nAdmin qarori bilan hisobingizdan <b>${Math.abs(amount)}</b> coin olib tashlandi. 📉`;
+    }
+
+    userMessage += `\n\n💰 Hozirgi balansingiz: <b>${user.coins} Coin</b>`;
+
+    // Userga xabar yuborish (bloklagan bo'lsa xatolik bermasligi uchun try-catch ichida)
+    await ctx.telegram
+      .sendMessage(targetId, userMessage, { parse_mode: "HTML" })
+      .catch(() => {
+        ctx.reply(
+          "⚠️ Foydalanuvchiga xabar yuborib bo'lmadi (botni bloklagan bo'lishi mumkin)."
+        );
+      });
   } catch (err) {
-    ctx.reply("Xatolik bo'ldi.");
+    console.error("AddCoin Error:", err);
+    ctx.reply("❌ Tizimda xatolik yuz berdi.");
   }
 });

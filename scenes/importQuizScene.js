@@ -270,8 +270,11 @@ const importQuizScene = new Scenes.WizardScene(
       await ctx.reply(
         "Bosh menyu:",
         Markup.keyboard([
-          ["Yangi test tuzish", "📥 Matn orqali yuklash"],
-          ["Testlarimni ko'rish", "👤 Mening profilim"],
+          ["➕ Yangi test tuzish", "📥 Matn orqali - Free"],
+          ["📚 Testlarimni ko'rish", "💰 Balans / Coin olish"],
+          ["🏆 Top Reyting", "👤 Mening profilim"],
+          ["📸 Rasm orqali test (AI) - NEW"],
+          ["📂 Fayl yuklash (Doc/Excel) - NEW"],
         ]).resize()
       );
     } catch (err) {

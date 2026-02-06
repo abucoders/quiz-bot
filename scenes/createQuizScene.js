@@ -238,8 +238,11 @@ const createQuizScene = new Scenes.WizardScene(
 
       // Asosiy menyu tugmalari
       const mainMenuKeyboard = Markup.keyboard([
-        ["Yangi test tuzish", "Testlarimni ko'rish"],
-        ["👤 Mening profilim"],
+        ["➕ Yangi test tuzish", "📥 Matn orqali - Free"],
+        ["📚 Testlarimni ko'rish", "💰 Balans / Coin olish"],
+        ["🏆 Top Reyting", "👤 Mening profilim"],
+        ["📸 Rasm orqali test (AI) - NEW"],
+        ["📂 Fayl yuklash (Doc/Excel) - NEW"],
       ]).resize();
 
       // Testni boshqarish tugmalari (Inline)

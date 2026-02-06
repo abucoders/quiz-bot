@@ -12,10 +12,10 @@ const pdf = require("pdf-parse");
 
 // Kalitlarni shu yerga qo'ying
 const API_KEYS = [
-  process.env.GEMINI_API_KEY, // 1-kalit
-  "AIzaSyDIY3WHQ2uIoBqmEM8-B27wh91vm9X1vAU",
-  "AIzaSyAC94f3ClYS7uKof_hXOiPCvuoU10cSL5s",
-  "AIzaSyCSziIMTIchFzoVWBuf8XDbvmOjZyr1Aj0",
+  process.env.GOOGLE_KEY_1,
+  process.env.GOOGLE_KEY_2,
+  process.env.GOOGLE_KEY_3,
+  process.env.GOOGLE_KEY_4,
 ];
 
 // Tasodifiy kalit tanlaydigan funksiya
@@ -150,10 +150,11 @@ const fileImportScene = new Scenes.WizardScene(
       await ctx.reply(
         "Yana nima qilamiz?",
         Markup.keyboard([
-          ["Yangi test tuzish", "📥 Matn orqali yuklash"],
-          ["Testlarimni ko'rish", "👤 Mening profilim"],
-          ["📸 Rasm orqali test (AI)"],
-          ["📂 Fayl yuklash (Doc/Excel)"],
+          ["➕ Yangi test tuzish", "📥 Matn orqali - Free"],
+          ["📚 Testlarimni ko'rish", "💰 Balans / Coin olish"],
+          ["🏆 Top Reyting", "👤 Mening profilim"],
+          ["📸 Rasm orqali test (AI) - NEW"],
+          ["📂 Fayl yuklash (Doc/Excel) - NEW"],
         ]).resize()
       );
 
