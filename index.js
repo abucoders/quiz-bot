@@ -15,6 +15,7 @@ const {
   editShuffleScene,
   addQuestionScene,
 } = require("./scenes/editQuizScenes");
+const aiQuizScene = require("./scenes/aiQuizScene");
 
 const PORT = process.env.PORT || 3000;
 
@@ -46,6 +47,7 @@ const stage = new Scenes.Stage([
   editTimerScene,
   editShuffleScene,
   addQuestionScene,
+  aiQuizScene,
 ]);
 
 bot.use(session());
@@ -612,6 +614,7 @@ bot.start(async ctx => {
           ...Markup.keyboard([
             ["Yangi test tuzish", "📥 Matn orqali yuklash"],
             ["Testlarimni ko'rish", "👤 Mening profilim"],
+            ["📸 Rasm orqali test (AI)"],
           ]).resize(),
         }
       );
@@ -626,6 +629,7 @@ bot.start(async ctx => {
 // --- MENYU HANDLERS ---
 bot.hears("Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
 bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz")); //
+bot.hears("📸 Rasm orqali test (AI)", ctx => ctx.scene.enter("ai_quiz_scene"));
 
 // MENING PROFILIM
 bot.hears("👤 Mening profilim", async ctx => {
