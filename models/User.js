@@ -9,6 +9,7 @@ const userSchema = new mongoose.Schema({
   totalScore: { type: Number, default: 0 },
   quizzesSolved: { type: Number, default: 0 },
   coins: { type: Number, default: 0 }, // Coinlar hisobi
+  lastBonusDate: Date,
 });
 
 module.exports = mongoose.model("User", userSchema);

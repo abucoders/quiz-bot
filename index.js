@@ -628,8 +628,98 @@ bot.start(async ctx => {
 
 // --- MENYU HANDLERS ---
 bot.hears("Yangi test tuzish", ctx => ctx.scene.enter("create_quiz"));
-bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz")); //
-bot.hears("📸 Rasm orqali test (AI)", ctx => ctx.scene.enter("ai_quiz_scene"));
+bot.hears("📥 Matn orqali yuklash", ctx => ctx.scene.enter("import_quiz"));
+
+// ===================================================
+// 📸 AI TEST (PULLIK KIRISH - 130 COIN)
+// ===================================================
+bot.hears("📸 Rasm orqali test (AI)", async ctx => {
+  const userId = ctx.from.id;
+  const COST = 130; // Narxi
+
+  try {
+    const user = await User.findOne({ telegramId: userId });
+
+    // 1. Coin yetarli ekanligini tekshiramiz
+    if (!user || user.coins < COST) {
+      // --- REFERAL LINK YASASH ---
+      const botUsername = ctx.botInfo.username;
+      const refLink = `https://t.me/${botUsername}?start=ref_${userId}`;
+      // Tayyor ulashish havolasi (Bossa, kontaktlar chiqadi)
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent("Do'stim, bu bot daxshat ekan! Kirib ko'r, testlaringni o'zi ishlab beradi! 🔥")}`;
+
+      return ctx.reply(
+        `🚫 <b>Mablag' yetarli emas!</b>\n\n` +
+          `Bu funksiyadan foydalanish narxi: <b>${COST} Coin</b>\n` +
+          `Sizning balansingiz: <b>${user ? user.coins : 0} Coin</b>\n\n` +
+          `<i>Hisobni to'ldirish uchun do'stlaringizni taklif qiling! Har bir do'stingiz uchun <b>100 Coin</b> olasiz.</i>`,
+        {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.url(
+                "🚀 Do'stlarni taklif qilish (Coin ishlash)",
+                shareUrl
+              ),
+            ],
+          ]),
+        }
+      );
+    }
+
+    // 2. To'lovni yechib olamiz
+    await User.findOneAndUpdate(
+      { telegramId: userId },
+      { $inc: { coins: -COST } }
+    );
+
+    // 3. Ruxsat beramiz
+    await ctx.reply(
+      `✅ <b>To'lov qabul qilindi! (-${COST} Coin)</b>\n` +
+        `AI rejimi ishga tushmoqda... Rasmlarni tayyorlang!`,
+      { parse_mode: "HTML" }
+    );
+
+    return ctx.scene.enter("ai_quiz_scene");
+  } catch (err) {
+    console.error("Payment Error:", err);
+    ctx.reply("Xatolik yuz berdi. Qayta urinib ko'ring.");
+  }
+});
+
+bot.command("bonus", async ctx => {
+  const userId = ctx.from.id;
+  const user = await User.findOne({ telegramId: userId });
+
+  // 24 soat o'tganini tekshirish
+  const now = new Date();
+  const lastBonus = user.lastBonusDate
+    ? new Date(user.lastBonusDate)
+    : new Date(0);
+  const diffHours = (now - lastBonus) / (1000 * 60 * 60);
+
+  if (diffHours < 24) {
+    const waitTime = Math.ceil(24 - diffHours);
+    return ctx.reply(
+      `⏳ <b>Siz bugungi bonusni olgansiz!</b>\nYana <b>${waitTime} soat</b>dan keyin urinib ko'ring.`,
+      { parse_mode: "HTML" }
+    );
+  }
+
+  // Bonus beramiz (Masalan 20 Coin)
+  await User.findOneAndUpdate(
+    { telegramId: userId },
+    {
+      $inc: { coins: 20 },
+      lastBonusDate: now,
+    }
+  );
+
+  ctx.reply(
+    `🎁 <b>Kunlik bonus!</b>\nSizga <b>20 Coin</b> berildi. Ertaga yana kiring!`,
+    { parse_mode: "HTML" }
+  );
+});
 
 // MENING PROFILIM
 bot.hears("👤 Mening profilim", async ctx => {
