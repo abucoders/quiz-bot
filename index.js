@@ -2195,7 +2195,6 @@ bot.hears("💰 Balans / Coin olish", async ctx => {
     msg += `Coinlar orqali siz <b>AI Test</b> va <b>Katta fayllarni yuklash</b> xizmatlaridan foydalanishingiz mumkin.\n\n`;
     msg += `<i>Sotib olish uchun kerakli paketni tanlang:</i> 👇`;
 
-    // Tugmalarni yasaymiz
     const buttons = prices.map(p => {
       // Admin lichkasiga boradigan xabar matni
       // Emojilar va yangi qatorlar (\n) bilan chiroyli qilamiz
